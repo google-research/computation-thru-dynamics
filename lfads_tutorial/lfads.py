@@ -406,6 +406,10 @@ def lfads(params, lfads_hps, key, x_t, keep_rate):
           'lograte_t' : lograte_t}
 
 
+lfads_encode_jit = jit(lfads_encode)
+lfads_decode_jit = jit(lfads_decode, static_argnums=(1,))
+
+
 # Batching accomplished by vectorized mapping.
 # We simultaneously map over random keys for forward-pass randomness
 # and inputs for batching.
