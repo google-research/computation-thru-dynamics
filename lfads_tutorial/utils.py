@@ -75,7 +75,7 @@ def merge_losses_dicts(list_of_dicts):
 
   Returns:
     a single dictionary with merged keys and values of np arrays """
-  merged_losses = {}
+  merged_d = {}
   d = list_of_dicts[0]
   for k in d:
     merged_d[k] = []

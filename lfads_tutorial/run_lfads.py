@@ -59,17 +59,20 @@ if not os.path.exists(figure_dir):
 
 data_path = os.path.join(data_dir, integrator_rnn_data_file)
 data_dict = utils.read_file(data_path)
-plotting.plot_data_pca(data_dict)
-plt.savefig(os.path.join(figure_dir, 'data_pca.png'))
-plotting.plot_data_example(data_dict['inputs'], data_dict['hiddens'],
-                           data_dict['outputs'], data_dict['targets'])
-plt.savefig(os.path.join(figure_dir, 'data_example.png'))
+do_plot=False
+if do_plot:
+  plotting.plot_data_pca(data_dict)
+  plt.savefig(os.path.join(figure_dir, 'data_pca.png'))
+  plotting.plot_data_example(data_dict['inputs'], data_dict['hiddens'],
+                             data_dict['outputs'], data_dict['targets'])
+  plt.savefig(os.path.join(figure_dir, 'data_example.png'))
 
 # Data was generated w/ VRNN w/ tanh, thus (data+1) / 2 -> [0,1]
 data_bxtxn = utils.spikify_data((data_dict['hiddens'] + 1)/2, onp_rng, data_dt,
                                 max_firing_rate=max_firing_rate)
-plotting.plot_data_stats(data_dict, data_bxtxn, data_dt)
-plt.savefig(os.path.join(figure_dir, 'data_stats.png'))
+if do_plot:
+  plotting.plot_data_stats(data_dict, data_bxtxn, data_dt)
+  plt.savefig(os.path.join(figure_dir, 'data_stats.png'))
 train_data, eval_data = utils.split_data(data_bxtxn, train_fraction=0.9)
 
 
@@ -134,15 +137,15 @@ key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
 init_params = lfads.lfads_params(key, lfads_hps)
 
 # Get the trained parameters and check out the losses.
-trained_params, tlosses, elosses = \
+trained_params, losses_dict = \
     optimize_lfads(init_params, lfads_hps, lfads_opt_hps, train_data, eval_data)
 
 # Plot some information about the training.
-tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
-elosses_thru_training = utils.merge_losses_dicts(all_elosses)
-plotting.plot_losses(tlosses_thru_training, elosses_thru_training,
-                     sampled_every=10, start_idx=100, stop_idx=num_batches)
-plt.savefig(os.path.join(figure_dir, 'losses.png'))
+if do_plot:
+  plotting.plot_losses(losses_dict['tlosses'],
+                       losses_dict['elosses'],
+                       sampled_every=10, start_idx=100, stop_idx=num_batches)
+  plt.savefig(os.path.join(figure_dir, 'losses.png'))
 
 
 # Here, have to implement after LFADS is working again.

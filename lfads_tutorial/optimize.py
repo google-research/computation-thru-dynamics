@@ -124,6 +124,8 @@ def optimize_lfads(init_params, lfads_hps, lfads_opt_hps,
   update_w_gc_jit = jit(update_w_gc, static_argnums=(2, 3))
 
   # Begin optimziation loop.
+  all_tlosses = []
+  all_elosses = []
   start_time = time.time()
   opt_state = opt_init(init_params)
   for bidx in range(num_batches):
@@ -140,24 +142,29 @@ def optimize_lfads(init_params, lfads_hps, lfads_opt_hps,
       # Training loss
       didxs = onp.random.randint(0, train_data.shape[0], batch_size)
       x_bxt = train_data[didxs].astype(onp.float32)
-      key = random.P2RNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
-      tlosses = lfads_losses_jit(params, lfads_hps, key, x_bxt, kl_warmup, 1.0)
+      key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
+      tlosses = lfads.lfads_losses_jit(params, lfads_hps, key, x_bxt,
+                                       kl_warmup, 1.0)
 
       # Evaluation loss
       key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
       didxs = onp.random.randint(0, eval_data.shape[0], batch_size)
       ex_bxt = eval_data[didxs].astype(onp.float32)
       # Commented out lfads_eval_losses_jit cuz freezing.
-      elosses = lfads_losses_jit(params, lfads_hps_eval, key, ex_bxt,
-                                 kl_warmup, 1.0)
+      elosses = lfads.lfads_losses_jit(params, lfads_hps, key, ex_bxt,
+                                       kl_warmup, 1.0)
       # Saving, printing.
       all_tlosses.append(tlosses)
       all_elosses.append(elosses)
       batch_time = time.time() - start_time
       s = "Batch {} in {:0.2f} sec, Step size: {:0.5f}, \
               Training loss {:0.0f}, Eval loss {:0.0f}"
-      print(s.format(bidx, batch_time, decay_fun(batch),
+      print(s.format(bidx, batch_time, decay_fun(bidx),
                      tlosses['total'], elosses['total']))
       start_time = time.time()
 
-  return optimizers.get_params(opt_state), tlosses, elosses
+      tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
+      elosses_thru_training = utils.merge_losses_dicts(all_elosses)
+      optimizer_details = {'tlosses' : tlosses_thru_training,
+                           'elosses' : elosses_thru_training}
+  return optimizers.get_params(opt_state), optimizer_details
