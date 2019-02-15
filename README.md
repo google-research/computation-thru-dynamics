@@ -13,3 +13,7 @@ bells and whistles.  Here we have released a tutorial version, written in
 Python/Numpy/JAX intentionally implemented with readabilily, comprehension and
 innovation in mind.
 
+## Integrator RNN - Train a Vanilla RNN in JAX to integrate white noise.
+Integration is a very simple task and highlights how to set up a loop over time,
+batch over multiple input/target examples, and take a gradient in JAX.  This
+example is also used as in put for the LFADS tutorial.
