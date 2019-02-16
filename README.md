@@ -23,7 +23,7 @@ of a dynamics system.  It is a sequential auto-encoder with some very particular
 bells and whistles.  Here we have released a tutorial version, written in
 *Python / Numpy / JAX* intentionally implemented with readabilily, comprehension and
 innovation in mind. You may find the full TensorFlow implementation with run manager 
-support ([here] (https://github.com/lfads)).
+support ([here](https://github.com/lfads)).
 
 ## Integrator RNN - Train a Vanilla RNN to integrate white noise.
 Integration is a very simple task and highlights how to set up a loop over time,
