@@ -14,7 +14,7 @@ The code is written in Python 2.7.13. You will also need:
 * **JAX** version 1.1.18 ([install](https://github.com/google/jax#installation)) -
 * **NumPy, SciPy, Matplotlib** ([install SciPy stack](https://www.scipy.org/install.html), contains all of them)
 * **h5py** ([install](https://pypi.python.org/pypi/h5py))
-* **A GPU** -  XLA compiles these examples to CPU strangely, so best to use a GPU for now.
+* **A GPU** -  XLA compiles these examples to CPU *very slowly*, so best to use a GPU for now.
 
 
 ## LFADS - Latent Factor Analysis via Dynamics Systems
