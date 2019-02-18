@@ -28,8 +28,15 @@ support ([here](https://github.com/lfads)).
 
 The LFADS tutorial uses the integrator RNN example (see below). The LFADS tutorial example attempts to infer the hidden states of the integrator RNN as well as the white noise input to the RNN. One runs the integrator RNN example and then copies the resulting data file, written in /tmp/ to /tmp/LFADS/data/. Edit the name of the data file in run_lfads.py and then run execute run_lfads.py.
 
+
 ## Integrator RNN - train a Vanilla RNN to integrate white noise.
+
 Integration is a very simple task and highlights how to set up a loop over time,
 batch over multiple input/target examples, use just-in-time compilation to speed
 the computation up, and take a gradient in *JAX*.  The data from this example is
 also used as input for the LFADS tutorial.
+
+
+## FORCE learning in Echostate networks
+
+In Colab, [Train an echostate network (ESN)](https://colab.research.google.com/github/google-research/computation-thru-dynamics/blob/master/notebooks/FORCE_Learning_in_JAX.ipynb) to generate the chaotic output of another recurrent neural network. This Colab / IPython notebook implements a continuous-time ESN with FORCE learning implemented via recursive least squares (RLS). It also lets you use a GPU and quickly get started with JAX! Two different implementations are explored, one at the JAX / Python level and another at the LAX level. After JIT compilation, the JAX implementation runs very fast.
