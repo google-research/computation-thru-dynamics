@@ -73,7 +73,7 @@ if do_plot:
   key, subkey = random.split(key, 2)
   skeys = random.split(subkey, ntoplot)
   inputs, targets = integrator.build_inputs_and_targets_jit(input_params, skeys)
-  plot_batch(inputs, targets)
+  plot_batch(ntimesteps, inputs, targets)
 
 
 ### TRAINING
