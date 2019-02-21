@@ -50,7 +50,7 @@ build_inputs_and_targets_jit = jit(build_inputs_and_targets,
                                    static_argnums=(0,))
 
 
-def plot_batch(input_bxtxu, target_bxtxo=None, output_bxtxo=None,
+def plot_batch(ntimesteps, input_bxtxu, target_bxtxo=None, output_bxtxo=None,
                errors_bxtxo=None):
   """Plot some white noise / integrated white noise examples."""
   ntoplot = 10
