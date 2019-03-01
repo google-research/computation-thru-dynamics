@@ -50,7 +50,7 @@ def plot_data_example(input_bxtxu, hidden_bxtxn=None,
     bidx = onp.random.randint(0, input_bxtxu.shape[0])
   ntoplot = 10
   ntimesteps = input_bxtxu.shape[1]
-  f = plt.figure(figsize=(10,5))
+  f = plt.figure(figsize=(10,8))
   plt.subplot(311)
   plt.plot(input_bxtxu[bidx,:,0])
   plt.xlim([0, ntimesteps-1])
@@ -66,6 +66,7 @@ def plot_data_example(input_bxtxu, hidden_bxtxn=None,
     plt.plot(output_bxtxo[bidx,:,0].T, 'r');
     plt.xlim([0, ntimesteps-1]);
     plt.ylabel('Output / Targets')
+    plt.xlabel('Time')
   if target_bxtxo is not None:
     plt.plot(target_bxtxo[bidx,:,0], 'k');
     plt.xlim([0, ntimesteps-1]);
@@ -98,13 +99,11 @@ def plot_data_stats(data_dict, data_bxtxn, data_dt):
 
 def plot_losses(tlosses, elosses, sampled_every):
   """Plot the losses associated with training LFADS."""
-  lidx = 1
-  nlosses = len(tlosses.keys())
   f = plt.figure(figsize=(15, 12))
   for lidx, k in enumerate(tlosses):
     plt.subplot(3, 2, lidx+1)
     tl = tlosses[k].shape[0]
-    x = onp.arange(0, tl)* sampled_every
+    x = onp.arange(0, tl) * sampled_every
     plt.plot(x, tlosses[k], 'k')
     plt.plot(x, elosses[k], 'r')
     plt.axis('tight')
@@ -117,7 +116,7 @@ def plot_priors(params):
   """Plot the parameters of the LFADS priors."""
   prior_dicts = {'ic' : params['ic_prior'], 'ii' : params['ii_prior']}
   pidxs = (pidx for pidx in onp.arange(1,12))
-  f = plt.figure(figsize=(12,6))
+  f = plt.figure(figsize=(12,8))
   for k in prior_dicts:
     for j in prior_dicts[k]:
       plt.subplot(2,3,next(pidxs));
@@ -138,20 +137,20 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   print("bidx: ", dd_bidx)
   ld = avg_lfads_dict
 
-  f = plt.figure(figsize=(12,6))
-  plt.subplot(161)
+  f = plt.figure(figsize=(12,12))
+  plt.subplot(261)
   plt.imshow(x_txd.T)
   plt.title('x')
 
-  plt.subplot(162)
+  plt.subplot(262)
   plt.imshow(ld['xenc_t'].T)
   plt.title('x enc')
 
-  plt.subplot(163)
+  plt.subplot(263)
   plt.imshow(ld['gen_t'].T)
   plt.title('generator')
 
-  plt.subplot(164)
+  plt.subplot(264)
   factors = ld['factor_t']
   plt.imshow(factors.T)
   plt.title('factors')
@@ -161,20 +160,19 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   if data_dict is not None:
     d_max = onp.max(data_dict['hiddens'][dd_bidx])
     d_min = onp.min(data_dict['hiddens'][dd_bidx])
-    plt.subplot(166)
+    plt.subplot(266)
     plt.imshow(data_dict['hiddens'][dd_bidx].T)
     plt.title('True rates')
 
-  plt.subplot(165)
+  plt.subplot(265)
   if d_max is not None: # Handle color saturation for viewing.
     rates = onp.exp(ld['lograte_t'])
     rates = onp.where(rates > 2*d_max, 2*d_max, rates)
     rates = onp.where(rates < 2*d_min, 2*d_min, rates)
   plt.imshow(rates.T)
-  plt.title('rates')
+  plt.title('rates')    
 
-  plt.figure(figsize=(12,6))
-  plt.subplot(131)
+  plt.subplot(267)
   ic_mean = ld['ic_mean']
   ic_std = onp.exp(0.5*ld['ic_logvar'])
   plt.stem(ic_mean)
@@ -182,11 +180,11 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   plt.plot(ic_mean - ic_std, 'r')
   plt.title('g0')
 
-  plt.subplot(132)
+  plt.subplot(268)
   plt.imshow(ld['c_t'].T)
   plt.title('controller')
 
-  plt.subplot(133)
+  plt.subplot(269)
   ii_mean = ld['ii_mean_t']
   plt.plot(ii_mean, 'b')
   if data_dict is not None:

@@ -70,7 +70,7 @@ train_data, eval_data = utils.split_data(data_bxtxn,
 eval_data_offset = int(train_fraction * data_bxtxn.shape[0])
 
 ### LFADS Hyper parameters
-do_plot = False # Set to False if you are not set up to plot, usually Tcl errors
+do_plot = True # Set to False if you are not set up to plot, usually Tcl errors
 
 data_dim = train_data.shape[2]  # input to lfads should have dimensions:
 ntimesteps = train_data.shape[1] #   (batch_size x ntimesteps x data_dim)
