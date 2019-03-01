@@ -22,7 +22,7 @@ import datetime
 import h5py
 
 import jax.numpy as np
-from jax import grad, jit, random, vmap
+from jax import grad, jit, lax, random, vmap
 from jax import jacrev, jacfwd
 from jax.experimental import optimizers
 import jax.flatten_util as flatten_util
@@ -51,13 +51,10 @@ def get_kl_warmup_fun(lfads_opt_hps):
   kl_warmup_end = lfads_opt_hps['kl_warmup_end']
   kl_max = lfads_opt_hps['kl_max']
   def kl_warmup(batch):
-    if batch < kl_warmup_start:
-      return 0.0
-    elif batch > kl_warmup_end:
-      return kl_max
-    else:
-      return kl_max * (onp.float(batch - kl_warmup_start) /
-                      onp.float(kl_warmup_end - kl_warmup_start))
+    kl_warmup = np.where(batch <= kl_warmup_start, 0.0,
+                         kl_max * ((batch - kl_warmup_start) /
+                                   (kl_warmup_end - kl_warmup_start)))
+    return np.where(batch > kl_warmup_end, 1.0, kl_warmup)
   return kl_warmup
 
 
@@ -93,78 +90,130 @@ def get_update_w_gc_fun(init_params, opt_update):
   return update_w_gc
 
 
-def optimize_lfads(init_params, lfads_hps, lfads_opt_hps,
+def optimize_lfads_core(key, batch_idx_start, num_batches,
+                        update_fun, kl_warmup_fun,
+                        opt_state, lfads_hps, lfads_opt_hps, train_data):
+  """Make gradient updates to the LFADS model.
+
+  Uses lax.fori_loop instead of a Python loop to reduce JAX overhead. This 
+    loop will be jit'd and run on device.
+
+  Arguments:
+    init_params: a dict of parameters to be trained
+    batch_idx_start: Where are we in the total number of batches
+    num_batches: how many batches to run
+    update_fun: the function that changes params based on grad of loss
+    kl_warmup_fun: function to compute the kl warmup
+    opt_state: the jax optimizer state, containing params and opt state
+    lfads_hps: dict of lfads model HPs
+    lfads_opt_hps: dict of optimization HPs
+    train_data: nexamples x time x ndims np array of data for training
+
+  Returns:
+    opt_state: the jax optimizer state, containing params and optimizer state"""
+
+  key, dkeyg = utils.keygen(key, num_batches) # data
+  key, fkeyg = utils.keygen(key, num_batches) # forward pass
+  
+  # Begin optimziation loop. Explicitly avoiding a python for-loop
+  # so that jax will not trace it for the sake of a gradient we will not use.  
+  def run_update(batch_idx, opt_state):
+    kl_warmup = kl_warmup_fun(batch_idx)
+    didxs = random.randint(next(dkeyg), [lfads_hps['batch_size']], 0,
+                           train_data.shape[0])
+    x_bxt = train_data[didxs].astype(np.float32)
+    opt_state = update_fun(batch_idx, opt_state, lfads_hps, lfads_opt_hps,
+                           next(fkeyg), x_bxt, kl_warmup)
+    return opt_state
+
+  lower = batch_idx_start
+  upper = batch_idx_start + num_batches
+  return lax.fori_loop(lower, upper, run_update, opt_state)
+
+
+optimize_lfads_core_jit = jit(optimize_lfads_core, static_argnums=(2,3,4,6,7))
+
+
+def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                    train_data, eval_data):
   """Optimize the LFADS model and print batch based optimization data.
+
+  This loop is at the cpu nonjax-numpy level.
 
   Arguments:
     init_params: a dict of parameters to be trained
     lfads_hps: dict of lfads model HPs
     lfads_opt_hps: dict of optimization HPs
     train_data: nexamples x time x ndims np array of data for training
-    eval_data: nexamples x time x ndims np array of data for evaluation
 
   Returns:
     a dictionary of trained parameters"""
-
-  batch_size = lfads_hps['batch_size']
-  num_batches = lfads_opt_hps['num_batches']
-  print_every = lfads_opt_hps['print_every']
+  
+  # Begin optimziation loop.
+  all_tlosses = []
+  all_elosses = []
 
   # Build some functions used in optimization.
   kl_warmup_fun = get_kl_warmup_fun(lfads_opt_hps)
   decay_fun = optimizers.exponential_decay(lfads_opt_hps['step_size'],
                                            lfads_opt_hps['decay_steps'],
                                            lfads_opt_hps['decay_factor'])
+
   opt_init, opt_update = optimizers.adam(step_size=decay_fun,
                                          b1=lfads_opt_hps['adam_b1'],
                                          b2=lfads_opt_hps['adam_b2'],
                                          eps=lfads_opt_hps['adam_eps'])
-  update_w_gc = get_update_w_gc_fun(init_params, opt_update)
-  update_w_gc_jit = jit(update_w_gc, static_argnums=(2, 3))
-
-  # Begin optimziation loop.
-  all_tlosses = []
-  all_elosses = []
-  start_time = time.time()
   opt_state = opt_init(init_params)
-  for bidx in range(num_batches):
-    kl_warmup = kl_warmup_fun(bidx)
+  update_fun = get_update_w_gc_fun(init_params, opt_update)
+
+  # Run the optimization, pausing every so often to collect data and
+  # print status.
+  batch_size = lfads_hps['batch_size']
+  num_batches = lfads_opt_hps['num_batches']
+  print_every = lfads_opt_hps['print_every']
+  num_opt_loops = int(num_batches / print_every)
+  key, dtkeyg = utils.keygen(key, num_opt_loops) # data, train
+  key, dekeyg = utils.keygen(key, num_opt_loops) # data, eval
+  key, tkeyg = utils.keygen(key, num_opt_loops) # training
+  params = optimizers.get_params(opt_state)
+  for oidx in range(num_opt_loops):
+    batch_idx_start = oidx * print_every
+    start_time = time.time()
+    opt_state = optimize_lfads_core_jit(next(tkeyg), batch_idx_start,
+                                        print_every, update_fun, kl_warmup_fun,
+                                        opt_state, lfads_hps, lfads_opt_hps,
+                                        train_data)
+    batch_time = time.time() - start_time
+
+    # Losses
+    params = optimizers.get_params(opt_state)
+    batch_pidx = batch_idx_start + print_every
+    kl_warmup = kl_warmup_fun(batch_idx_start)
+    
+    # Training loss
     didxs = onp.random.randint(0, train_data.shape[0], batch_size)
     x_bxt = train_data[didxs].astype(onp.float32)
-    key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
-    opt_state = update_w_gc_jit(bidx, opt_state, lfads_hps, lfads_opt_hps,
-                                key, x_bxt, kl_warmup)
+    tlosses = lfads.lfads_losses_jit(params, lfads_hps, next(dtkeyg), x_bxt,
+                                     kl_warmup, 1.0)
 
-    if bidx % print_every == 0:
-      params = optimizers.get_params(opt_state)
+    # Evaluation loss
+    didxs = onp.random.randint(0, eval_data.shape[0], batch_size)
+    ex_bxt = eval_data[didxs].astype(onp.float32)
+    elosses = lfads.lfads_losses_jit(params, lfads_hps, next(dekeyg), ex_bxt,
+                                     kl_warmup, 1.0)
+    # Saving, printing.
+    all_tlosses.append(tlosses)
+    all_elosses.append(elosses)
+    s = "Batches {}-{} in {:0.2f} sec, Step size: {:0.5f}, Training loss {:0.0f}, Eval loss {:0.0f}"
+    print(s.format(batch_idx_start+1, batch_pidx, batch_time,
+                   decay_fun(batch_pidx), tlosses['total'], elosses['total']))
 
-      # Training loss
-      didxs = onp.random.randint(0, train_data.shape[0], batch_size)
-      x_bxt = train_data[didxs].astype(onp.float32)
-      key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
-      tlosses = lfads.lfads_losses_jit(params, lfads_hps, key, x_bxt,
-                                       kl_warmup, 1.0)
+    tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
+    elosses_thru_training = utils.merge_losses_dicts(all_elosses)
+    optimizer_details = {'tlosses' : tlosses_thru_training,
+                         'elosses' : elosses_thru_training}
+    
+  return params, optimizer_details
 
-      # Evaluation loss
-      key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
-      didxs = onp.random.randint(0, eval_data.shape[0], batch_size)
-      ex_bxt = eval_data[didxs].astype(onp.float32)
-      # Commented out lfads_eval_losses_jit cuz freezing.
-      elosses = lfads.lfads_losses_jit(params, lfads_hps, key, ex_bxt,
-                                       kl_warmup, 1.0)
-      # Saving, printing.
-      all_tlosses.append(tlosses)
-      all_elosses.append(elosses)
-      batch_time = time.time() - start_time
-      s = "Batch {} in {:0.2f} sec, Step size: {:0.5f}, \
-              Training loss {:0.0f}, Eval loss {:0.0f}"
-      print(s.format(bidx, batch_time, decay_fun(bidx),
-                     tlosses['total'], elosses['total']))
-      start_time = time.time()
 
-      tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
-      elosses_thru_training = utils.merge_losses_dicts(all_elosses)
-      optimizer_details = {'tlosses' : tlosses_thru_training,
-                           'elosses' : elosses_thru_training}
-  return optimizers.get_params(opt_state), optimizer_details
+  

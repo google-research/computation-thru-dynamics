@@ -39,7 +39,6 @@ def split_data(data_b, train_fraction):
   train_data = data_b[train_data_offset:eval_data_offset]
   eval_data = data_b[eval_data_offset:]
 
-  print(train_data.shape, eval_data.shape)
   return train_data, eval_data
 
 

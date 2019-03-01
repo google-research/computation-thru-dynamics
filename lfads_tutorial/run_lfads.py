@@ -44,7 +44,7 @@ onp_rng = onp.random.RandomState(seed=0) # For here-level numpy
 
 ### LOAD THE DATA
 integrator_rnn_data_file = \
-     'trained_data_vrnn_pure_int_0.00735_2019-02-06_19_46_04.h5'
+    'trained_data_vrnn_pure_int_0.00021_2019-02-28_21:45:41.h5'
 data_dt = 1.0/25.0
 max_firing_rate = 20            # spikes per second
 
@@ -110,14 +110,14 @@ lfads_hps = {'data_dim' : data_dim, 'ntimesteps' : ntimesteps,
 
 ### LFADS Optimization hyperparameters
 num_batches = 3000
-print_every = 10
-step_size = 0.05
+print_every = 50
+step_size = 0.05                # initial learning rate
 decay_factor = 0.999
 decay_steps = 1
 keep_rate = 0.98                # dropout keep rate during training
 max_grad_norm = 20.0            # gradient clipping above this value
-kl_warmup_start = 500
-kl_warmup_end = 1500
+kl_warmup_start = 500.0 # explicitly float
+kl_warmup_end = 1500.0  # explicitly float
 kl_max = 1.0
 l2reg = 0.000002      # amount of l2 on weights (in lfads_hps)
 
@@ -129,6 +129,8 @@ lfads_opt_hps = {'num_batches' : num_batches, 'step_size' : step_size,
                  'adam_b1' : 0.9, 'adam_b2' : 0.999, 'adam_eps' : 1e-1}
 
 
+assert num_batches >= print_every and num_batches % print_every == 0
+
 
 ### TRAINING LFADS MODEL
 
@@ -137,13 +139,15 @@ key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
 init_params = lfads.lfads_params(key, lfads_hps)
 
 # Get the trained parameters and check out the losses.
-trained_params, losses_dict = \
-    optimize_lfads(init_params, lfads_hps, lfads_opt_hps, train_data, eval_data)
+key = random.PRNGKey(onp.random.randint(0, utils.MAX_SEED_INT))
+trained_params, opt_details_dict = \
+    optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
+                   train_data, eval_data)
 
 # Plot some information about the training.
 if do_plot:
-  plotting.plot_losses(losses_dict['tlosses'],
-                       losses_dict['elosses'],
+  plotting.plot_losses(opt_details_dict['tlosses'],
+                       opt_details_dict['elosses'],
                        sampled_every=10, start_idx=100, stop_idx=num_batches)
   plt.savefig(os.path.join(figure_dir, 'losses.png'))
 
@@ -159,5 +163,5 @@ fname_uniquifier = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 network_fname = ('trained_params_' + rnn_type + '_' + task_type + '_' + \
                  fname_uniquifier + '.npz')
 network_path = os.path.join(output_dir, network_fname)
-print(network_path)
+print("Saving parameters: ", network_path)
 onp.savez(network_path, trained_params)
