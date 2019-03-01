@@ -96,24 +96,20 @@ def plot_data_stats(data_dict, data_bxtxn, data_dt):
   return f
 
 
-def plot_losses(tlosses, elosses, sampled_every=1, start_idx=0, stop_idx=None):
+def plot_losses(tlosses, elosses, sampled_every):
   """Plot the losses associated with training LFADS."""
   lidx = 1
   nlosses = len(tlosses.keys())
-  f = plt.figure(figsize=(15, 8))
-  for k in tlosses:
-    plt.subplot(2, 3, lidx)
+  f = plt.figure(figsize=(15, 12))
+  for lidx, k in enumerate(tlosses):
+    plt.subplot(3, 2, lidx+1)
     tl = tlosses[k].shape[0]
-    x = onp.arange(start_idx, stop_idx, sampled_every)
-    lidx_start = int(start_idx/sampled_every)
-    lidx_stop = int(stop_idx/sampled_every)
-    y = tlosses[k][lidx_start:lidx_stop]
-    plt.plot(x, y, 'k')
-    y = elosses[k][lidx_start:lidx_stop]
-    plt.plot(x, y, 'r')
+    x = onp.arange(0, tl)* sampled_every
+    plt.plot(x, tlosses[k], 'k')
+    plt.plot(x, elosses[k], 'r')
     plt.axis('tight')
     plt.title(k)
-    lidx += 1
+
   return f
 
 

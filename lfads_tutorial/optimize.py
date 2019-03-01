@@ -50,11 +50,11 @@ def get_kl_warmup_fun(lfads_opt_hps):
   kl_warmup_start = lfads_opt_hps['kl_warmup_start']
   kl_warmup_end = lfads_opt_hps['kl_warmup_end']
   kl_max = lfads_opt_hps['kl_max']
-  def kl_warmup(batch):
-    kl_warmup = np.where(batch <= kl_warmup_start, 0.0,
-                         kl_max * ((batch - kl_warmup_start) /
+  def kl_warmup(batch_idx):
+    kl_warmup = np.where(batch_idx < kl_warmup_start, 0.0,
+                         kl_max * ((batch_idx - kl_warmup_start) /
                                    (kl_warmup_end - kl_warmup_start)))
-    return np.where(batch > kl_warmup_end, 1.0, kl_warmup)
+    return np.where(batch_idx > kl_warmup_end, 1.0, kl_warmup)
   return kl_warmup
 
 

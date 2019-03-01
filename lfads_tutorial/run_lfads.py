@@ -39,12 +39,12 @@ import plotting
 import utils
 
 
-onp_rng = onp.random.RandomState(seed=0) # For here-level numpy
+onp_rng = onp.random.RandomState(seed=None) # For here-level numpy
 
 
 ### LOAD THE DATA
 integrator_rnn_data_file = \
-    'trained_data_vrnn_pure_int_0.00021_2019-02-28_21:45:41.h5'
+    'trained_data_vrnn_pure_int_0.00032_2019-03-01_21:29:49.h5'
 data_dt = 1.0/25.0
 max_firing_rate = 20            # spikes per second
 
@@ -59,24 +59,19 @@ if not os.path.exists(figure_dir):
 
 data_path = os.path.join(data_dir, integrator_rnn_data_file)
 data_dict = utils.read_file(data_path)
-do_plot=False
-if do_plot:
-  plotting.plot_data_pca(data_dict)
-  plt.savefig(os.path.join(figure_dir, 'data_pca.png'))
-  plotting.plot_data_example(data_dict['inputs'], data_dict['hiddens'],
-                             data_dict['outputs'], data_dict['targets'])
-  plt.savefig(os.path.join(figure_dir, 'data_example.png'))
 
 # Data was generated w/ VRNN w/ tanh, thus (data+1) / 2 -> [0,1]
 data_bxtxn = utils.spikify_data((data_dict['hiddens'] + 1)/2, onp_rng, data_dt,
                                 max_firing_rate=max_firing_rate)
-if do_plot:
-  plotting.plot_data_stats(data_dict, data_bxtxn, data_dt)
-  plt.savefig(os.path.join(figure_dir, 'data_stats.png'))
-train_data, eval_data = utils.split_data(data_bxtxn, train_fraction=0.9)
 
+train_fraction = 0.9
+train_data, eval_data = utils.split_data(data_bxtxn,
+                                         train_fraction=train_fraction)
+eval_data_offset = int(train_fraction * data_bxtxn.shape[0])
 
 ### LFADS Hyper parameters
+do_plot = False # Set to False if you are not set up to plot, usually Tcl errors
+
 data_dim = train_data.shape[2]  # input to lfads should have dimensions:
 ntimesteps = train_data.shape[1] #   (batch_size x ntimesteps x data_dim)
 batch_size = 128      # batch size during optimization
@@ -109,14 +104,14 @@ lfads_hps = {'data_dim' : data_dim, 'ntimesteps' : ntimesteps,
 
 
 ### LFADS Optimization hyperparameters
-num_batches = 3000
+num_batches = 4000
 print_every = 50
-step_size = 0.05                # initial learning rate
+step_size = 0.025               # initial learning rate
 decay_factor = 0.999
 decay_steps = 1
 keep_rate = 0.98                # dropout keep rate during training
-max_grad_norm = 20.0            # gradient clipping above this value
-kl_warmup_start = 500.0 # explicitly float
+max_grad_norm = 10.0            # gradient clipping above this value
+kl_warmup_start = 750.0 # explicitly float
 kl_warmup_end = 1500.0  # explicitly float
 kl_max = 1.0
 l2reg = 0.000002      # amount of l2 on weights (in lfads_hps)
@@ -144,18 +139,8 @@ trained_params, opt_details_dict = \
     optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                    train_data, eval_data)
 
-# Plot some information about the training.
-if do_plot:
-  plotting.plot_losses(opt_details_dict['tlosses'],
-                       opt_details_dict['elosses'],
-                       sampled_every=10, start_idx=100, stop_idx=num_batches)
-  plt.savefig(os.path.join(figure_dir, 'losses.png'))
 
-
-# Here, have to implement after LFADS is working again.
-#nexamples_to_save = 10
-#plotting.plot_lfads()
-
+### SAVE AND PLOT
 # Create a savename for the trained parameters and save them.
 rnn_type = 'lfads'
 task_type = 'integrator'
@@ -165,3 +150,41 @@ network_fname = ('trained_params_' + rnn_type + '_' + task_type + '_' + \
 network_path = os.path.join(output_dir, network_fname)
 print("Saving parameters: ", network_path)
 onp.savez(network_path, trained_params)
+
+if do_plot:
+  # Plot examples and statistics about the data.
+  plotting.plot_data_pca(data_dict)
+  plt.savefig(os.path.join(figure_dir, 'data_pca.png'))
+  plotting.plot_data_example(data_dict['inputs'], data_dict['hiddens'],
+                             data_dict['outputs'], data_dict['targets'])
+  plt.savefig(os.path.join(figure_dir, 'data_example.png'))
+  plotting.plot_data_stats(data_dict, data_bxtxn, data_dt)
+  plt.savefig(os.path.join(figure_dir, 'data_stats.png'))
+
+  
+  # Plot some information about the training.
+  plotting.plot_losses(opt_details_dict['tlosses'],
+                       opt_details_dict['elosses'],
+                       sampled_every=print_every)
+  plt.savefig(os.path.join(figure_dir, 'losses.png'))
+
+  # Plot a bunch of examples of eval trials run through LFADS.
+  nexamples_to_save = 10
+  for eidx in range(nexamples_to_save):
+    bidx = onp.random.randint(eval_data.shape[0])
+    psa_example = eval_data[bidx,:,:].astype(np.float32)
+    # Make an entire batch of a single, example, and then
+    # randomize the VAE with batchsize number of keys.
+    examples = onp.repeat(np.expand_dims(psa_example, axis=0),
+                          batch_size, axis=0)
+    skeys = random.split(key, batch_size)
+    lfads_dict = lfads.batch_lfads_jit(trained_params, lfads_hps, skeys,
+                                       examples, 1.0)
+    # posterior sample and average    
+    psa_example_dict = utils.average_lfads_batch(lfads_dict) 
+
+    # The ii_scale may need to flipped or rescaled as the is an identifiability
+    # of issue on the scale and sign of the inferred input.
+    plotting.plot_lfads(psa_example, psa_example_dict,
+                        data_dict, eval_data_offset+bidx, ii_scale=1.0)
+    plt.savefig(os.path.join(figure_dir, 'lfads_output_%d.png'%(bidx)))
