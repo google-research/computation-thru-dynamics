@@ -36,7 +36,7 @@ batch over multiple input/target examples, use just-in-time compilation to speed
 the computation up, and take a gradient in *JAX*.  The data from this example is
 also used as input for the LFADS tutorial.
 
-This example is run through the Jupyter notebook. 
+This example is run through this [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/Integrator%20RNN%20Tutorial.ipynb). 
 
 ## FORCE learning in Echostate networks
 
