@@ -20,7 +20,7 @@ import jax.numpy as np
 from jax import jit, vmap
 from jax import random
 import matplotlib.pyplot as plt
-import utils
+import integrator_rnn_tutorial.utils as utils
 
 
 def build_input_and_target_pure_integration(input_params, key):
@@ -72,6 +72,6 @@ def plot_batch(ntimesteps, input_bxtxu, target_bxtxo=None, output_bxtxo=None,
     plt.plot(errors_bxtxo[0:ntoplot,:,0].T, '--');
     plt.xlim([0, ntimesteps-1]);
     plt.ylabel("|Errors|")
-  plt.xlabel('Time')
+  plt.xlabel('Timesteps')
 
 

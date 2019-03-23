@@ -32,7 +32,7 @@ import numpy as onp  # original CPU-backed NumPy
 import os
 import time
 
-import utils
+import integrator_rnn_tutorial.utils as utils
 
 MAX_SEED_INT = 10000000
 
@@ -41,7 +41,7 @@ def random_vrnn_params(key, u, n, o, g=1.0):
   """Generate random RNN parameters"""
 
   key, skeys = utils.keygen(key, 4)
-  hscale = 0.25
+  hscale = 0.1
   ifactor = 1.0 / np.sqrt(u)
   hfactor = g / np.sqrt(n)
   pfactor = 1.0 / np.sqrt(n)
@@ -96,7 +96,8 @@ def loss(params, inputs_bxtxu, targets_bxtxo, l2reg):
   flatten = lambda params: flatten_util.ravel_pytree(params)[0]
   l2_loss = l2reg * np.sum(flatten(params)**2)
   lms_loss = np.mean((outs_bxtxo - targets_bxtxo)**2)
-  return lms_loss + l2_loss
+  total_loss = lms_loss + l2_loss
+  return {'total' : total_loss, 'lms' : lms_loss, 'l2' : l2_loss}
 
 
 flatten = lambda params: flatten_util.ravel_pytree(params)[0]
@@ -106,7 +107,10 @@ def update_w_gc(i, opt_state, opt_update, x_bxt, f_bxt, max_grad_norm, l2reg):
   params = optimizers.get_params(opt_state)
   unflatten = flatten_util.ravel_pytree(params)[1] # Requires shape
 
-  grads = grad(loss)(params, x_bxt, f_bxt, l2reg)
+  def training_loss(params, x_bxt, f_bxt, l2reg):
+    return loss(params, x_bxt, f_bxt, l2reg)['total']
+  
+  grads = grad(training_loss)(params, x_bxt, f_bxt, l2reg)
   flat_grads = flatten(grads)
   grad_norm = np.sqrt(np.sum(flat_grads**2))
   normed_grads = np.where(grad_norm <= max_grad_norm, flat_grads,
@@ -139,3 +143,66 @@ def run_trials(batched_run_fun, inputs_and_targets_fun, nbatches, batch_size):
   return {'inputs' : onp.vstack(inputs), 'hiddens' : onp.vstack(hiddens),
           'outputs' : onp.vstack(outputs), 'targets' : onp.vstack(targets)}
 
+
+def plot_params(params):
+  """ Plot the parameters of the vanilla RNN. """
+  plt.figure(figsize=(16,8))
+  plt.subplot(231)
+  plt.stem(params['wO'][0,:])
+  plt.title('wO - output weights')
+  
+  plt.subplot(232)
+  plt.stem(params['h0'])
+  plt.title('h0 - initial hidden state')
+  
+  plt.subplot(233)
+  plt.imshow(params['wR'], interpolation=None)
+  plt.title('wR - recurrent weights')
+  plt.colorbar()
+  
+  plt.subplot(234)
+  plt.stem(params['wI'])
+  plt.title('wI - input weights')
+  
+  plt.subplot(235)
+  plt.stem(params['bR'])
+  plt.title('bR - recurrent biases')
+  
+  plt.subplot(236)
+  evals, _ = onp.linalg.eig(params['wR'])
+  x = onp.linspace(-1, 1, 1000)
+  plt.plot(x, onp.sqrt(1-x**2), 'k')
+  plt.plot(x, -onp.sqrt(1-x**2), 'k')
+  plt.plot(onp.real(evals), onp.imag(evals), '.')
+  plt.axis('equal')
+  plt.title('Eigenvalues of wR')
+
+  
+def plot_examples(ntimesteps, rnn_internals, nexamples=1):
+  """Plot some input/hidden/output triplets."""
+  plt.figure(figsize=(nexamples*5, 12))
+  for bidx in range(nexamples):
+    plt.subplot(3, nexamples, bidx+1)
+    plt.plot(rnn_internals['inputs'][bidx,:], 'k')
+    plt.xlim([1, ntimesteps])
+    plt.title('Example %d' % (bidx))
+    if bidx == 0:
+      plt.ylabel('Input')
+      
+  ntoplot = 10
+  closeness = 0.25
+  for bidx in range(nexamples):
+    plt.subplot(3, nexamples, nexamples+bidx+1)
+    plt.plot(rnn_internals['hiddens'][bidx, :, 0:ntoplot] +
+             closeness * onp.arange(ntoplot), 'b')
+    plt.xlim([1, ntimesteps])
+    if bidx == 0:
+      plt.ylabel('Hidden Units')
+      
+  for bidx in range(nexamples):
+    plt.subplot(3, nexamples, 2*nexamples+bidx+1)
+    plt.plot(rnn_internals['outputs'][bidx,:,:], 'r')
+    plt.xlim([1, ntimesteps])
+    plt.xlabel('Timesteps')
+    if bidx == 0:
+      plt.ylabel('Output')

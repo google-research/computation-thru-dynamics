@@ -19,7 +19,7 @@
 import h5py
 from jax import random
 import numpy as onp # original numpy
-
+import os
 
 MAX_SEED_INT = 10000000
 
@@ -116,7 +116,14 @@ def keygen(key, nkeys):
   return keys[0], (k for k in keys[1:])
 
 
-def write_file(data_fname, data_dict):
+def ensure_dir(file_path):
+  """Make sure the directory exists, create if it does not."""
+  directory = os.path.dirname(file_path)
+  if not os.path.exists(directory):
+    os.makedirs(directory)
+
+    
+def write_file(data_fname, data_dict, do_make_dir=False):
   """Write a simple dictionary using h5py.
 
   Arguments;
@@ -125,6 +132,8 @@ def write_file(data_fname, data_dict):
 
   """
   try:
+    ensure_dir(data_fname)
+      
     with h5py.File(data_fname, 'w') as hf:
       for k in data_dict:
         hf.create_dataset(k, data=data_dict[k])
