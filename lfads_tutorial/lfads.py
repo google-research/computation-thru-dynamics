@@ -17,18 +17,11 @@
 
 
 from __future__ import print_function, division, absolute_import
-
-import h5py
-
-import distributions as dists
-
 import jax.numpy as np
-from jax import grad, jit, random, vmap
+from jax import jit, random, vmap
 import jax.flatten_util as flatten_util
-from jax.config import config
-#config.update("jax_platform_name", "Host") # CUDA / Jellyfish
-
-import utils
+import lfads_tutorial.distributions as dists
+import lfads_tutorial.utils as utils
 
 
 def sigmoid(x):
@@ -340,7 +333,8 @@ def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
   #    factors_{t-1} -> controller_t -> sample_t -> generator_t -> factors_t
   # is really one big loop and therefor one RNN.
   c = c0 = params['con']['h0']
-  g = g0 = dists.diag_gaussian_sample(next(skeys), ic_mean, ic_logvar)
+  g = g0 = dists.diag_gaussian_sample(next(skeys), ic_mean,
+                                      ic_logvar, lfads_hps['var_min'])
   f = f0 = np.zeros((lfads_hps['factors_dim'],))
   c_t = []
   ii_mean_t = []
@@ -353,7 +347,8 @@ def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
     c = gru(params['con'], c, cin)
     cout = affine(params['con_out'], c)
     ii_mean, ii_logvar = np.split(cout, 2, axis=0) # inferred input params
-    ii = dists.diag_gaussian_sample(next(skeys), ii_mean, ii_logvar)
+    ii = dists.diag_gaussian_sample(next(skeys), ii_mean,
+                                    ii_logvar, lfads_hps['var_min'])
     g = gru(params['gen'], g, ii)
     g = dropout(g, next(skeys), keep_rate)
     f = normed_linear(params['factors'], g)
@@ -441,17 +436,21 @@ def lfads_losses(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
   ic_post_mean_b = lfads['ic_mean']
   ic_post_logvar_b = lfads['ic_logvar']
   kl_loss_g0_b = dists.batch_kl_gauss_gauss(ic_post_mean_b, ic_post_logvar_b,
-                                            params['ic_prior'])
-  kl_loss_g0 = kl_scale * np.sum(kl_loss_g0_b) / B
-
+                                            params['ic_prior'],
+                                            lfads_hps['var_min'])
+  kl_loss_g0_prescale = np.sum(kl_loss_g0_b) / B  
+  kl_loss_g0 = kl_scale * kl_loss_g0_prescale
+  
   # KL - Inferred input
   ii_post_mean_bxt = lfads['ii_mean_t']
   ii_post_var_bxt = lfads['ii_logvar_t']
   keys = random.split(next(skeys), B)
   kl_loss_ii_b = dists.batch_kl_gauss_ar1(keys, ii_post_mean_bxt,
-                                          ii_post_var_bxt, params['ii_prior'])
-  kl_loss_ii = kl_scale * np.sum(kl_loss_ii_b) / B
-
+                                          ii_post_var_bxt, params['ii_prior'],
+                                          lfads_hps['var_min'])
+  kl_loss_ii_prescale = np.sum(kl_loss_ii_b) / B
+  kl_loss_ii = kl_scale * kl_loss_ii_prescale
+  
   # Log-likelihood of data given latents.
   lograte_bxt = lfads['lograte_t']
   log_p_xgz = np.sum(dists.poisson_log_likelihood(x_bxt, lograte_bxt)) / B
@@ -463,7 +462,9 @@ def lfads_losses(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
 
   loss = -log_p_xgz + kl_loss_g0 + kl_loss_ii + l2_loss
   all_losses = {'total' : loss, 'nlog_p_xgz' : -log_p_xgz,
-                'kl_g0' : kl_loss_g0, 'kl_ii' : kl_loss_ii, 'l2' : l2_loss}
+                'kl_g0' : kl_loss_g0, 'kl_g0_prescale' : kl_loss_g0_prescale,
+                'kl_ii' : kl_loss_ii, 'kl_ii_prescale' : kl_loss_ii_prescale,
+                'l2' : l2_loss}
   return all_losses
 
 

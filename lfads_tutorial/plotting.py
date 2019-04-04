@@ -21,15 +21,17 @@ from __future__ import print_function, division, absolute_import
 import matplotlib.pyplot as plt
 import numpy as onp
 
+from scipy import stats
 from sklearn.decomposition import PCA
-
 
 def plot_data_pca(data_dict):
   """Plot the PCA skree plot of the hidden units in the integrator RNN."""
   f = plt.figure()
   ndata = data_dict['hiddens'].shape[0]
-  print(data_dict.keys())
-  print(data_dict['hiddens'].shape)
+
+  print('Number of data examples: ', data_dict['hiddens'].shape[0])
+  print('Number of timesteps: ', data_dict['hiddens'].shape[1])
+  print('Number of data dimensions: ', data_dict['hiddens'].shape[2])
   pca = PCA(n_components=100)
   pca.fit(onp.reshape(data_dict['hiddens'], [10240 * 25, 100]))
 
@@ -58,7 +60,7 @@ def plot_data_example(input_bxtxu, hidden_bxtxn=None,
   plt.title('Example %d'%bidx)
   if hidden_bxtxn is not None:
     plt.subplot(312)
-    plt.plot(hidden_bxtxn[bidx, :, 0:ntoplot])
+    plt.plot(hidden_bxtxn[bidx, :, 0:ntoplot] + 0.25*onp.arange(0, ntoplot, 1), 'b')
     plt.ylabel('Hiddens')
     plt.xlim([0, ntimesteps-1]);
   plt.subplot(414)
@@ -132,25 +134,25 @@ def plot_priors(params):
 
 
 def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
-               ii_scale=1.0):
+               renorm_fun=None):
   """Plot the full state ofLFADS operating on a single example."""
   print("bidx: ", dd_bidx)
   ld = avg_lfads_dict
 
   f = plt.figure(figsize=(12,12))
-  plt.subplot(261)
+  plt.subplot(361)
   plt.imshow(x_txd.T)
   plt.title('x')
 
-  plt.subplot(262)
+  plt.subplot(362)
   plt.imshow(ld['xenc_t'].T)
   plt.title('x enc')
 
-  plt.subplot(263)
+  plt.subplot(363)
   plt.imshow(ld['gen_t'].T)
   plt.title('generator')
 
-  plt.subplot(264)
+  plt.subplot(364)
   factors = ld['factor_t']
   plt.imshow(factors.T)
   plt.title('factors')
@@ -158,21 +160,22 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   d_max = None
   d_min = None
   if data_dict is not None:
-    d_max = onp.max(data_dict['hiddens'][dd_bidx])
-    d_min = onp.min(data_dict['hiddens'][dd_bidx])
-    plt.subplot(266)
-    plt.imshow(data_dict['hiddens'][dd_bidx].T)
+    true_rates = renorm_fun(data_dict['hiddens'][dd_bidx])
+    d_max = onp.max(true_rates)
+    d_min = onp.min(true_rates)
+    plt.subplot(366)
+    plt.imshow(true_rates.T)
     plt.title('True rates')
 
-  plt.subplot(265)
+  plt.subplot(365)
   if d_max is not None: # Handle color saturation for viewing.
     rates = onp.exp(ld['lograte_t'])
-    rates = onp.where(rates > 2*d_max, 2*d_max, rates)
-    rates = onp.where(rates < 2*d_min, 2*d_min, rates)
-  plt.imshow(rates.T)
+    imshow_rates = onp.where(rates > 2*d_max, 2*d_max, rates)
+    imshow_rates = onp.where(imshow_rates < 2*d_min, 2*d_min, imshow_rates)
+  plt.imshow(imshow_rates.T)
   plt.title('rates')    
 
-  plt.subplot(267)
+  plt.subplot(334)
   ic_mean = ld['ic_mean']
   ic_std = onp.exp(0.5*ld['ic_logvar'])
   plt.stem(ic_mean)
@@ -180,16 +183,27 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   plt.plot(ic_mean - ic_std, 'r')
   plt.title('g0')
 
-  plt.subplot(268)
+  plt.subplot(335)
   plt.imshow(ld['c_t'].T)
   plt.title('controller')
 
-  plt.subplot(269)
+  plt.subplot(336)
   ii_mean = ld['ii_mean_t']
   plt.plot(ii_mean, 'b')
   if data_dict is not None:
-    plt.plot(ii_scale*data_dict['inputs'][dd_bidx], 'm', lw=3)
+    true_input = data_dict['inputs'][dd_bidx]
+    slope, intercept, r_value, p_value, std_err = \
+        stats.linregress(true_input.T, ii_mean.T)
+    plt.plot(slope*true_input + intercept, 'm', lw=3)
   plt.plot(ld['ii_t'], 'k')
   plt.title('inferred input')
 
+  plt.subplot(313)
+  ntoplot=5
+  a = 0.5
+  plt.plot(rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'b')
+  plt.plot(true_rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'r')
+  #rates = onp.where(rates < 2*d_min, 2*d_min, rates)  
+  
   return f
+

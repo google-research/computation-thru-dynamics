@@ -22,8 +22,7 @@ import datetime
 import h5py
 
 import jax.numpy as np
-from jax import grad, jit, lax, random, vmap
-from jax import jacrev, jacfwd
+from jax import grad, jit, lax, random
 from jax.experimental import optimizers
 import jax.flatten_util as flatten_util
 
@@ -31,8 +30,8 @@ import matplotlib.pyplot as plt
 import numpy as onp  # original CPU-backed NumPy
 import sklearn
 
-import lfads
-import utils
+import lfads_tutorial.lfads as lfads
+import lfads_tutorial.utils as utils
 
 import time
 
@@ -49,12 +48,14 @@ def get_kl_warmup_fun(lfads_opt_hps):
 
   kl_warmup_start = lfads_opt_hps['kl_warmup_start']
   kl_warmup_end = lfads_opt_hps['kl_warmup_end']
+  kl_min = lfads_opt_hps['kl_min']
   kl_max = lfads_opt_hps['kl_max']
   def kl_warmup(batch_idx):
-    kl_warmup = np.where(batch_idx < kl_warmup_start, 0.0,
-                         kl_max * ((batch_idx - kl_warmup_start) /
-                                   (kl_warmup_end - kl_warmup_start)))
-    return np.where(batch_idx > kl_warmup_end, 1.0, kl_warmup)
+    progress_frac = ((batch_idx - kl_warmup_start) /
+                     (kl_warmup_end - kl_warmup_start))
+    kl_warmup = np.where(batch_idx < kl_warmup_start, kl_min,
+                         (kl_max - kl_min) * progress_frac + kl_min)
+    return np.where(batch_idx > kl_warmup_end, kl_max, kl_warmup)
   return kl_warmup
 
 
@@ -172,14 +173,12 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
   num_batches = lfads_opt_hps['num_batches']
   print_every = lfads_opt_hps['print_every']
   num_opt_loops = int(num_batches / print_every)
-  key, dtkeyg = utils.keygen(key, num_opt_loops) # data, train
-  key, dekeyg = utils.keygen(key, num_opt_loops) # data, eval
-  key, tkeyg = utils.keygen(key, num_opt_loops) # training
   params = optimizers.get_params(opt_state)
   for oidx in range(num_opt_loops):
     batch_idx_start = oidx * print_every
     start_time = time.time()
-    opt_state = optimize_lfads_core_jit(next(tkeyg), batch_idx_start,
+    key, tkey, dtkey, dekey = random.split(random.fold_in(key, oidx), 4)
+    opt_state = optimize_lfads_core_jit(tkey, batch_idx_start,
                                         print_every, update_fun, kl_warmup_fun,
                                         opt_state, lfads_hps, lfads_opt_hps,
                                         train_data)
@@ -189,17 +188,16 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
     params = optimizers.get_params(opt_state)
     batch_pidx = batch_idx_start + print_every
     kl_warmup = kl_warmup_fun(batch_idx_start)
-    
     # Training loss
     didxs = onp.random.randint(0, train_data.shape[0], batch_size)
     x_bxt = train_data[didxs].astype(onp.float32)
-    tlosses = lfads.lfads_losses_jit(params, lfads_hps, next(dtkeyg), x_bxt,
+    tlosses = lfads.lfads_losses_jit(params, lfads_hps, dtkey, x_bxt,
                                      kl_warmup, 1.0)
 
     # Evaluation loss
     didxs = onp.random.randint(0, eval_data.shape[0], batch_size)
     ex_bxt = eval_data[didxs].astype(onp.float32)
-    elosses = lfads.lfads_losses_jit(params, lfads_hps, next(dekeyg), ex_bxt,
+    elosses = lfads.lfads_losses_jit(params, lfads_hps, dekey, ex_bxt,
                                      kl_warmup, 1.0)
     # Saving, printing.
     all_tlosses.append(tlosses)
