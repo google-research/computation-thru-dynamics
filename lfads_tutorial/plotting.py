@@ -139,52 +139,52 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   print("bidx: ", dd_bidx)
   ld = avg_lfads_dict
 
+  def remove_outliers(A, nstds=3):
+    clip = nstds * onp.std(A)
+    A_mean = onp.mean(A)
+    A_show = onp.where(A < A_mean - clip, A_mean - clip, A)
+    return onp.where(A_show > A_mean + clip, A_mean + clip, A_show)
+    
   f = plt.figure(figsize=(12,12))
   plt.subplot(361)
   plt.imshow(x_txd.T)
   plt.title('x')
 
   plt.subplot(362)
-  plt.imshow(ld['xenc_t'].T)
+  x_enc = remove_outliers(ld['xenc_t'])
+  plt.imshow(x_enc.T)
   plt.title('x enc')
 
   plt.subplot(363)
-  plt.imshow(ld['gen_t'].T)
+  gen = remove_outliers(ld['gen_t'])
+  plt.imshow(gen.T)
   plt.title('generator')
 
   plt.subplot(364)
-  factors = ld['factor_t']
+  factors = remove_outliers(ld['factor_t'])
   plt.imshow(factors.T)
   plt.title('factors')
 
-  d_max = None
-  d_min = None
   if data_dict is not None:
     true_rates = renorm_fun(data_dict['hiddens'][dd_bidx])
-    d_max = onp.max(true_rates)
-    d_min = onp.min(true_rates)
     plt.subplot(366)
     plt.imshow(true_rates.T)
     plt.title('True rates')
 
   plt.subplot(365)
-  if d_max is not None: # Handle color saturation for viewing.
-    rates = onp.exp(ld['lograte_t'])
-    imshow_rates = onp.where(rates > 2*d_max, 2*d_max, rates)
-    imshow_rates = onp.where(imshow_rates < 2*d_min, 2*d_min, imshow_rates)
-  plt.imshow(imshow_rates.T)
+  rates = remove_outliers(onp.exp(ld['lograte_t']))
+  plt.imshow(rates.T)
   plt.title('rates')    
 
   plt.subplot(334)
   ic_mean = ld['ic_mean']
   ic_std = onp.exp(0.5*ld['ic_logvar'])
   plt.stem(ic_mean)
-  plt.plot(ic_mean + ic_std, 'r')
-  plt.plot(ic_mean - ic_std, 'r')
-  plt.title('g0')
+  plt.title('g0 mean')
 
   plt.subplot(335)
-  plt.imshow(ld['c_t'].T)
+  con = remove_outliers(ld['c_t'])
+  plt.imshow(con.T)
   plt.title('controller')
 
   plt.subplot(336)
@@ -194,16 +194,18 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
     true_input = data_dict['inputs'][dd_bidx]
     slope, intercept, r_value, p_value, std_err = \
         stats.linregress(true_input.T, ii_mean.T)
-    plt.plot(slope*true_input + intercept, 'm', lw=3)
-  plt.plot(ld['ii_t'], 'k')
-  plt.title('inferred input')
-
+    plt.plot(slope*true_input + intercept, 'm', lw=2)
+  #plt.plot(ld['ii_t'], 'k')
+  plt.title('inferred input mean')
+  plt.legend(('LFADS inferred input', 'rescaled true input to integrator RNN'))
+  
   plt.subplot(313)
-  ntoplot=5
-  a = 0.5
+  ntoplot=6
+  a = 0.25
   plt.plot(rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'b')
   plt.plot(true_rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'r')
-  #rates = onp.where(rates < 2*d_min, 2*d_min, rates)  
+  plt.title('LFADS rates (blue), True rates (red)')
+  plt.xlabel('timesteps')
   
   return f
 
