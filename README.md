@@ -28,6 +28,7 @@ support ([here](https://github.com/lfads)).
 
 The LFADS tutorial uses the integrator RNN example (see below). The LFADS tutorial example attempts to infer the hidden states of the integrator RNN as well as the white noise input to the RNN. One runs the integrator RNN example and then copies the resulting data file, written in /tmp/ to /tmp/LFADS/data/. Edit the name of the data file in run_lfads.py and then run execute run_lfads.py.
 
+The LFADS tutorial is run through this [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/LFADS%20Tutorial.ipynb).
 
 ## Integrator RNN - train a Vanilla RNN to integrate white noise.
 
