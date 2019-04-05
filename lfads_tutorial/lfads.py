@@ -486,6 +486,25 @@ def lfads_training_loss(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
   return losses['total']
 
 
+def posterior_sample_and_average(params, lfads_hps, key, x_txd):
+  """Get the denoised lfad inferred values by posterior sample and average.
+
+  Arguments:
+    params: dictionary of lfads parameters
+    lfads_hps: dict of LFADS hyperparameters
+    key: JAX random state
+    x_txd: 2d np.array time by dim trial to denoise
+
+  Returns: 
+    LFADS dictionary of inferred values, averaged over randomness.
+  """
+  batch_size = lfads_hps['batch_size']
+  skeys = random.split(key, batch_size)  
+  x_bxtxd = np.repeat(np.expand_dims(x_txd, axis=0), batch_size, axis=0)
+  lfads_dict = batch_lfads(params, lfads_hps, skeys, x_bxtxd, 1.0)
+  return utils.average_lfads_batch(lfads_dict)
+
+
 ### JIT
 
 # JIT functions are orders of magnitude faster.  The first time you use them,
@@ -498,3 +517,7 @@ def lfads_training_loss(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
 batch_lfads_jit = jit(batch_lfads, static_argnums=(1,))
 lfads_losses_jit = jit(lfads_losses, static_argnums=(1,))
 lfads_training_loss_jit = jit(lfads_training_loss, static_argnums=(1,))
+posterior_sample_and_average_jit = jit(posterior_sample_and_average, static_argnums=(1,))
+
+                  
+  
