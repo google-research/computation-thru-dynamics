@@ -74,7 +74,21 @@ def vrnn(params, h, x):
 def vrnn_run(params, x_t):
   """Run the Vanilla RNN T steps, where T is shape[0] of input."""
   # per-example predictions
-  h = params['h0']
+  h = params['h0']  
+  h_t = []
+  for x in x_t:
+    h = vrnn(params, h, x)
+    h_t.append(h)
+    
+  h_t = np.array(h_t)  
+  o_t = batch_affine(params, h_t)
+  return h_t, o_t
+
+
+def vrnn_run_with_h0(params, x_t, h0):
+  """Run the Vanilla RNN T steps, where T is shape[0] of input."""
+  # per-example predictions
+  h = h0
   h_t = []
   for x in x_t:
     h = vrnn(params, h, x)
@@ -88,6 +102,7 @@ def vrnn_run(params, x_t):
 # Let's upgrade it to handle batches using `vmap`
 # Make a batched version of the `predict` function
 batched_rnn_run = vmap(vrnn_run, in_axes=(None, 0))
+batched_rnn_run_w_h0 = vmap(vrnn_run_with_h0, in_axes=(None, 0, 0))
   
   
 def loss(params, inputs_bxtxu, targets_bxtxo, l2reg):
@@ -123,26 +138,36 @@ loss_jit = jit(loss, static_argnums=(3,))
 update_w_gc_jit = jit(update_w_gc, static_argnums=(2,5,6))
 
 
-def run_trials(batched_run_fun, inputs_and_targets_fun, nbatches, batch_size):
+def run_trials(batched_run_fun, inputs_targets_h0s_fun, nbatches, batch_size):
   """Run a bunch of trials and save everything in a dictionary."""
   inputs = []
   hiddens = []
   outputs = []
   targets = []
+  h0s = []
   for n in range(nbatches):
     data_seeds = onp.random.randint(0, MAX_SEED_INT, size=batch_size)
     keys = np.array([random.PRNGKey(ds) for ds in data_seeds])
-    input, target = inputs_and_targets_fun(keys)
-    h_bxt, o_bxt = batched_run_fun(input)
+    input_b, target_b, h0s_b = inputs_targets_h0s_fun(keys)
+    if h0s_b is None:
+      h_b, o_b = batched_run_fun(input_b)
+    else:
+      h_b, o_b = batched_run_fun(input_b, h0s_b)      
+      h0s.append(h0s_b)
+      
+    inputs.append(input_b)
+    hiddens.append(h_b)
+    outputs.append(o_b)
+    targets.append(target_b)
 
-    inputs.append(input)
-    hiddens.append(h_bxt)
-    outputs.append(o_bxt)
-    targets.append(target)
-
-  return {'inputs' : onp.vstack(inputs), 'hiddens' : onp.vstack(hiddens),
-          'outputs' : onp.vstack(outputs), 'targets' : onp.vstack(targets)}
-
+    
+  trial_dict = {'inputs' : onp.vstack(inputs), 'hiddens' : onp.vstack(hiddens),
+                'outputs' : onp.vstack(outputs), 'targets' : onp.vstack(targets)}
+  if h0s_b is not None:
+    trial_dict['h0s'] = onp.vstack(h0s)
+  else:
+    trial_dict['h0s'] = None
+  return trial_dict
 
 def plot_params(params):
   """ Plot the parameters of the vanilla RNN. """
@@ -184,7 +209,7 @@ def plot_examples(ntimesteps, rnn_internals, nexamples=1):
   for bidx in range(nexamples):
     plt.subplot(3, nexamples, bidx+1)
     plt.plot(rnn_internals['inputs'][bidx,:], 'k')
-    plt.xlim([1, ntimesteps])
+    plt.xlim([0, ntimesteps])
     plt.title('Example %d' % (bidx))
     if bidx == 0:
       plt.ylabel('Input')
@@ -195,14 +220,15 @@ def plot_examples(ntimesteps, rnn_internals, nexamples=1):
     plt.subplot(3, nexamples, nexamples+bidx+1)
     plt.plot(rnn_internals['hiddens'][bidx, :, 0:ntoplot] +
              closeness * onp.arange(ntoplot), 'b')
-    plt.xlim([1, ntimesteps])
+    plt.xlim([0, ntimesteps])
     if bidx == 0:
       plt.ylabel('Hidden Units')
       
   for bidx in range(nexamples):
     plt.subplot(3, nexamples, 2*nexamples+bidx+1)
     plt.plot(rnn_internals['outputs'][bidx,:,:], 'r')
-    plt.xlim([1, ntimesteps])
+    plt.plot(rnn_internals['targets'][bidx,:,:], 'k')    
+    plt.xlim([0, ntimesteps])
     plt.xlabel('Timesteps')
     if bidx == 0:
       plt.ylabel('Output')
