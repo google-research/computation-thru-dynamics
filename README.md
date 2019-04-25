@@ -39,6 +39,20 @@ also used as input for the LFADS tutorial.
 
 This example is run through this [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/Integrator%20RNN%20Tutorial.ipynb). 
 
+
+## Fixed point finding - train a GRU to make a binary decision and study it via fixed point finding.
+ 
+The goal of this tutorial is to learn about fixed point finding by running the algorithm on a Gated Recurrent Unit (GRU), which is trained to make a binary decision, namely whether the integral of the white noise input is in total positive or negative, outputing either a +1 or a -1 to encode the decision.
+
+Running the fixed point finder on this decision-making GRU will yield:
+1. the underlying fixed points
+2. the first order taylor series approximations around those fixed points.
+
+Doing this will exercise the concepts defined in the [Opening the black box: low-dimensional dynamics in high-dimensional recurrent neural networks](https://www.mitpressjournals.org/doi/full/10.1162/NECO_a_00409).
+
+This example is run through this [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/Fixed%20Point%20Finder%20Tutorial.ipynb). 
+
+
 ## FORCE learning in Echostate networks
 
 In Colab, [Train an echostate network (ESN)](https://colab.research.google.com/github/google-research/computation-thru-dynamics/blob/master/notebooks/FORCE_Learning_in_JAX.ipynb) to generate the chaotic output of another recurrent neural network. This Colab / IPython notebook implements a continuous-time ESN with FORCE learning implemented via recursive least squares (RLS). It also lets you use a GPU and quickly get started with JAX! Two different implementations are explored, one at the JAX / Python level and another at the LAX level. After JIT compilation, the JAX implementation runs very fast.
