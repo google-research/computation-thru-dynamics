@@ -17,7 +17,7 @@ The code is written in Python 2.7.13. You will also need:
 * **A GPU** -  XLA compiles these examples to CPU *very slowly*, so best to use a GPU for now.
 
 
-## LFADS - Latent Factor Analysis via Dynamics Systems
+## LFADS - Latent Factor Analysis via Dynamical Systems
 
 LFADS is a tool for inferring dynamics from noisy, high-dimensional observations
 of a dynamics system.  It is a sequential auto-encoder with some very particular
@@ -48,7 +48,7 @@ Running the fixed point finder on this decision-making GRU will yield:
 1. the underlying fixed points
 2. the first order taylor series approximations around those fixed points.
 
-Doing this will exercise the concepts defined in the [Opening the black box: low-dimensional dynamics in high-dimensional recurrent neural networks](https://www.mitpressjournals.org/doi/full/10.1162/NECO_a_00409).
+Going through this tutorial will exercise the concepts defined in the [Opening the black box: low-dimensional dynamics in high-dimensional recurrent neural networks](https://www.mitpressjournals.org/doi/full/10.1162/NECO_a_00409).
 
 This example is run through this [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/Fixed%20Point%20Finder%20Tutorial.ipynb). 
 
