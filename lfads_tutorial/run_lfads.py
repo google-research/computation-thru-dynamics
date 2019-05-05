@@ -24,7 +24,6 @@ import h5py
 import jax.numpy as np
 from jax import grad, jit, random, vmap
 from jax import jacrev, jacfwd
-from jax.experimental import optimizers
 import jax.flatten_util as flatten_util
 
 import matplotlib.pyplot as plt

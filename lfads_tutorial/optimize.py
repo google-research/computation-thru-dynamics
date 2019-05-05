@@ -59,12 +59,13 @@ def get_kl_warmup_fun(lfads_opt_hps):
   return kl_warmup
 
 
-def get_update_w_gc_fun(init_params, opt_update):
+def get_update_w_gc_fun(init_params, opt_update, get_params):
   """Update the parameters w/ gradient clipped, gradient descent updates.
 
   Arguments:
     init_params: parameter dictionary
-    opt_update: a function that updates the parameters (from jax.optimizers)
+    opt_update: a function to update the optimizer state (from jax.optimizers)
+    get_params: a function to extract parameters from the optimizer state
 
   Returns:
     a function which updates the parameters according to the optimizer.
@@ -77,7 +78,7 @@ def get_update_w_gc_fun(init_params, opt_update):
     max_grad_norm = lfads_opt_hps['max_grad_norm']
     keep_rate = lfads_opt_hps['keep_rate']
 
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
 
     grads = grad(lfads.lfads_training_loss)(params, lfads_hps, key, x_bxt,
                                             kl_warmup, keep_rate)
@@ -160,12 +161,12 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                                            lfads_opt_hps['decay_steps'],
                                            lfads_opt_hps['decay_factor'])
 
-  opt_init, opt_update = optimizers.adam(step_size=decay_fun,
-                                         b1=lfads_opt_hps['adam_b1'],
-                                         b2=lfads_opt_hps['adam_b2'],
-                                         eps=lfads_opt_hps['adam_eps'])
+  opt_init, opt_update, get_params = optimizers.adam(step_size=decay_fun,
+                                                     b1=lfads_opt_hps['adam_b1'],
+                                                     b2=lfads_opt_hps['adam_b2'],
+                                                     eps=lfads_opt_hps['adam_eps'])
   opt_state = opt_init(init_params)
-  update_fun = get_update_w_gc_fun(init_params, opt_update)
+  update_fun = get_update_w_gc_fun(init_params, opt_update, get_params)
 
   # Run the optimization, pausing every so often to collect data and
   # print status.
@@ -173,7 +174,7 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
   num_batches = lfads_opt_hps['num_batches']
   print_every = lfads_opt_hps['print_every']
   num_opt_loops = int(num_batches / print_every)
-  params = optimizers.get_params(opt_state)
+  params = get_params(opt_state)
   for oidx in range(num_opt_loops):
     batch_idx_start = oidx * print_every
     start_time = time.time()
@@ -185,7 +186,7 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
     batch_time = time.time() - start_time
 
     # Losses
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     batch_pidx = batch_idx_start + print_every
     kl_warmup = kl_warmup_fun(batch_idx_start)
     # Training loss

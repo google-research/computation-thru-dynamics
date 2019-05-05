@@ -171,33 +171,34 @@ def optimize_fps(rnn_fun, fp_candidates, hps, do_print=True):
 
   total_fp_loss_fun = get_total_fp_loss_fun(rnn_fun)
 
-  def get_update_fun(opt_update):
+  def get_update_fun(opt_update, get_params):
     """Update the parameters using gradient descent.
 
     Arguments:
-      opt_update: a function that updates the parameters (from jax.optimizers)
+      opt_update: a function to update the optimizer state (from jax.optimizers)
+      get_params: a function that extract parametrs from the optimizer state
 
     Returns:
       a 2-tuple (function which updates the parameters according to the 
         optimizer, a dictionary of details of the optimization)
     """
     def update(i, opt_state):
-      params = optimizers.get_params(opt_state)
+      params = get_params(opt_state)
       grads = grad(total_fp_loss_fun)(params)    
       return opt_update(i, grads, opt_state)
 
     return update
-  
+
   # Build some functions used in optimization.
   decay_fun = optimizers.exponential_decay(hps['step_size'],
                                            hps['decay_steps'],
                                            hps['decay_factor'])
-  opt_init, opt_update = optimizers.adam(step_size=decay_fun,
-                                         b1=hps['adam_b1'],
-                                         b2=hps['adam_b2'],
-                                         eps=hps['adam_eps'])
+  opt_init, opt_update, get_params = optimizers.adam(step_size=decay_fun,
+                                                     b1=hps['adam_b1'],
+                                                     b2=hps['adam_b2'],
+                                                     eps=hps['adam_eps'])
   opt_state = opt_init(fp_candidates)
-  update_fun = get_update_fun(opt_update)
+  update_fun = get_update_fun(opt_update, get_params)
 
   # Run the optimization, pausing every so often to collect data and
   # print status.
@@ -205,7 +206,7 @@ def optimize_fps(rnn_fun, fp_candidates, hps, do_print=True):
   num_batches = hps['num_batches']
   print_every = hps['opt_print_every']
   num_opt_loops = int(num_batches / print_every)
-  fps = optimizers.get_params(opt_state)
+  fps = get_params(opt_state)
   fp_losses = []
   do_stop = False
   for oidx in range(num_opt_loops):
@@ -218,7 +219,7 @@ def optimize_fps(rnn_fun, fp_candidates, hps, do_print=True):
     batch_time = time.time() - start_time
 
     # Training loss
-    fps = optimizers.get_params(opt_state)
+    fps = get_params(opt_state)
     batch_pidx = batch_idx_start + print_every
     total_fp_loss = total_fp_loss_fun(fps)
     fp_losses.append(total_fp_loss)

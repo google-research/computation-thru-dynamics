@@ -200,12 +200,15 @@ def loss(params, inputs_bxtxu, targets_bxtxo, targets_mask_t, l2reg):
 flatten = lambda params: flatten_util.ravel_pytree(params)[0]
 
 
-def update_w_gc(i, opt_state, opt_update, x_bxt, f_bxt, f_mask_bxt, max_grad_norm, l2reg):
+def update_w_gc(i, opt_state, opt_update, get_params,
+                x_bxt, f_bxt, f_mask_bxt, max_grad_norm, l2reg):
   """Update the parameters w/ gradient clipped, gradient descent updates.
 
   Arguments: 
     i: batch number
     opt_state: parameters plus optimizer state
+    opt_update: optimizer state update function
+    get_params: function to extract parameters from optimizer state
     x_bxt: rnn inputs
     f_bxt: rnn targets
     f_mask_bxt: masks for when target is defined
@@ -216,7 +219,7 @@ def update_w_gc(i, opt_state, opt_update, x_bxt, f_bxt, f_mask_bxt, max_grad_nor
     opt_state tuple (as above) that includes updated parameters and optimzier 
       state.
   """
-  params = optimizers.get_params(opt_state)
+  params = get_params(opt_state)
   unflatten = flatten_util.ravel_pytree(params)[1] # Requires shape
 
   def training_loss(params, x_bxt, f_bxt, l2reg):
@@ -232,7 +235,7 @@ def update_w_gc(i, opt_state, opt_update, x_bxt, f_bxt, f_mask_bxt, max_grad_nor
 
 
 loss_jit = jit(loss, static_argnums=(3,))
-update_w_gc_jit = jit(update_w_gc, static_argnums=(2,5,6))
+update_w_gc_jit = jit(update_w_gc, static_argnums=(2,3,6,7))
 
 
 def run_trials(batched_run_fun, io_fun, nbatches, batch_size):
