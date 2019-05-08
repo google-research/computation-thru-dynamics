@@ -24,7 +24,6 @@ from jax import grad, jit, vmap
 from jax import random
 from jax import jacrev
 from jax.experimental import optimizers
-import jax.flatten_util as flatten_util
 
 import matplotlib.pyplot as plt
 import numpy as onp  # original CPU-backed NumPy
@@ -188,16 +187,12 @@ def loss(params, inputs_bxtxu, targets_bxtxo, targets_mask_t, l2reg):
     dict of losses
   """
   _, outs_bxtxo = batched_rnn_run(params, inputs_bxtxu)
-  flatten = lambda params: flatten_util.ravel_pytree(params)[0]
-  l2_loss = l2reg * np.sum(flatten(params)**2)
+  l2_loss = l2reg * optimizers.l2_norm(params)**2
   outs_bxsxo = outs_bxtxo[:, targets_mask_t, :]
   targets_bxsxo = targets_bxtxo[:, targets_mask_t, :]
   lms_loss = np.mean((outs_bxsxo - targets_bxsxo)**2)
   total_loss = lms_loss + l2_loss
   return {'total' : total_loss, 'lms' : lms_loss, 'l2' : l2_loss}
-
-
-flatten = lambda params: flatten_util.ravel_pytree(params)[0]
 
 
 def update_w_gc(i, opt_state, opt_update, get_params,
@@ -220,22 +215,17 @@ def update_w_gc(i, opt_state, opt_update, get_params,
       state.
   """
   params = get_params(opt_state)
-  unflatten = flatten_util.ravel_pytree(params)[1] # Requires shape
 
   def training_loss(params, x_bxt, f_bxt, l2reg):
     return loss(params, x_bxt, f_bxt, f_mask_bxt, l2reg)['total']
   
   grads = grad(training_loss)(params, x_bxt, f_bxt, l2reg)
-  flat_grads = flatten(grads)
-  grad_norm = np.sqrt(np.sum(flat_grads**2))
-  normed_grads = np.where(grad_norm <= max_grad_norm, flat_grads,
-                          flat_grads * (max_grad_norm / grad_norm))
-  uf_grads = unflatten(normed_grads)
-  return opt_update(i, uf_grads, opt_state)
+  clipped_grads = optimizers.clip_grads(grads, max_grad_norm)
+  return opt_update(i, clipped_grads, opt_state)
 
 
-loss_jit = jit(loss, static_argnums=(3,))
-update_w_gc_jit = jit(update_w_gc, static_argnums=(2,3,6,7))
+loss_jit = jit(loss)
+update_w_gc_jit = jit(update_w_gc, static_argnums=(2,3))
 
 
 def run_trials(batched_run_fun, io_fun, nbatches, batch_size):

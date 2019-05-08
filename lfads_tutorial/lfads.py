@@ -19,7 +19,8 @@
 from __future__ import print_function, division, absolute_import
 import jax.numpy as np
 from jax import jit, random, vmap
-import jax.flatten_util as flatten_util
+from jax.experimental import optimizers
+
 import lfads_tutorial.distributions as dists
 import lfads_tutorial.utils as utils
 
@@ -457,8 +458,7 @@ def lfads_losses(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
 
   # L2
   l2reg = lfads_hps['l2reg']
-  flatten_lfads = lambda params: flatten_util.ravel_pytree(params)[0]
-  l2_loss = l2reg * np.sum(flatten_lfads(params)**2)
+  l2_loss = l2reg * optimizers.l2_norm(params)**2
 
   loss = -log_p_xgz + kl_loss_g0 + kl_loss_ii + l2_loss
   all_losses = {'total' : loss, 'nlog_p_xgz' : -log_p_xgz,

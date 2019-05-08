@@ -24,7 +24,6 @@ import h5py
 import jax.numpy as np
 from jax import grad, jit, lax, random
 from jax.experimental import optimizers
-import jax.flatten_util as flatten_util
 
 import matplotlib.pyplot as plt
 import numpy as onp  # original CPU-backed NumPy
@@ -57,39 +56,6 @@ def get_kl_warmup_fun(lfads_opt_hps):
                          (kl_max - kl_min) * progress_frac + kl_min)
     return np.where(batch_idx > kl_warmup_end, kl_max, kl_warmup)
   return kl_warmup
-
-
-def get_update_w_gc_fun(init_params, opt_update, get_params):
-  """Update the parameters w/ gradient clipped, gradient descent updates.
-
-  Arguments:
-    init_params: parameter dictionary
-    opt_update: a function to update the optimizer state (from jax.optimizers)
-    get_params: a function to extract parameters from the optimizer state
-
-  Returns:
-    a function which updates the parameters according to the optimizer.
-  """
-  unflatten_lfads = flatten_util.ravel_pytree(init_params)[1]
-  flatten_lfads = lambda params: flatten_util.ravel_pytree(params)[0]
-
-  def update_w_gc(i, opt_state, lfads_hps, lfads_opt_hps, key, x_bxt,
-                  kl_warmup):
-    max_grad_norm = lfads_opt_hps['max_grad_norm']
-    keep_rate = lfads_opt_hps['keep_rate']
-
-    params = get_params(opt_state)
-
-    grads = grad(lfads.lfads_training_loss)(params, lfads_hps, key, x_bxt,
-                                            kl_warmup, keep_rate)
-    flat_grads = flatten_lfads(grads)
-    grad_norm = np.sqrt(np.sum(flat_grads**2))
-    normed_grads = np.where(grad_norm <= max_grad_norm, flat_grads,
-                            flat_grads * (max_grad_norm / grad_norm))
-    uf_grads = unflatten_lfads(normed_grads)
-    return opt_update(i, uf_grads, opt_state)
-
-  return update_w_gc
 
 
 def optimize_lfads_core(key, batch_idx_start, num_batches,
@@ -166,8 +132,17 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                                                      b2=lfads_opt_hps['adam_b2'],
                                                      eps=lfads_opt_hps['adam_eps'])
   opt_state = opt_init(init_params)
-  update_fun = get_update_w_gc_fun(init_params, opt_update, get_params)
 
+  def update_w_gc(i, opt_state, lfads_hps, lfads_opt_hps, key, x_bxt,
+                  kl_warmup):
+    """Update fun for gradients, includes gradient clipping."""
+    params = get_params(opt_state)
+    grads = grad(lfads.lfads_training_loss)(params, lfads_hps, key, x_bxt,
+                                            kl_warmup,
+                                            lfads_opt_hps['keep_rate'])
+    clipped_grads = optimizers.clip_grads(grads, lfads_opt_hps['max_grad_norm'])
+    return opt_update(i, clipped_grads, opt_state)
+  
   # Run the optimization, pausing every so often to collect data and
   # print status.
   batch_size = lfads_hps['batch_size']
@@ -180,7 +155,7 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
     start_time = time.time()
     key, tkey, dtkey, dekey = random.split(random.fold_in(key, oidx), 4)
     opt_state = optimize_lfads_core_jit(tkey, batch_idx_start,
-                                        print_every, update_fun, kl_warmup_fun,
+                                        print_every, update_w_gc, kl_warmup_fun,
                                         opt_state, lfads_hps, lfads_opt_hps,
                                         train_data)
     batch_time = time.time() - start_time
