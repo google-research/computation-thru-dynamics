@@ -25,6 +25,8 @@ from jax import random
 from jax import jacrev, jacfwd
 from jax.experimental import optimizers
 import jax.experimental.stax as stax
+from jax.lax import scan
+from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as onp  # original CPU-backed NumPy
@@ -61,25 +63,26 @@ def affine(params, x):
 # I.e. if affine yields n_y_1 = dot(n_W_m, m_x_1), then
 # batch_affine yields t_y_n.
 # And so the vectorization pattern goes for all batch_* functions.
-batch_affine = vmap(affine, in_axes=(None, 0))
+#batch_affine = vmap(affine, in_axes=(None, 0))
+
+
+def batch_affine(params, x):
+  """Implement y = w x + b (batch mode over time)"""
+  return np.einsum('ij,kj->ki', params['wO'], x) + params['bO']
 
 
 def vrnn(params, h, x):
   """Run the Vanilla RNN one step"""
   a = np.dot(params['wI'], x) + params['bR'] + np.dot(params['wR'], h)
-  return np.tanh(a)
+  r_new = np.tanh(a)
+  return r_new, r_new
 
 
 def vrnn_run(params, x_t):
   """Run the Vanilla RNN T steps, where T is shape[0] of input."""
   # per-example predictions
-  h = params['h0']  
-  h_t = []
-  for x in x_t:
-    h = vrnn(params, h, x)
-    h_t.append(h)
-    
-  h_t = np.array(h_t)  
+  h = params['h0']
+  _, h_t = scan(partial(vrnn,params), h, x_t)
   o_t = batch_affine(params, h_t)
   return h_t, o_t
 
@@ -88,12 +91,7 @@ def vrnn_run_with_h0(params, x_t, h0):
   """Run the Vanilla RNN T steps, where T is shape[0] of input."""
   # per-example predictions
   h = h0
-  h_t = []
-  for x in x_t:
-    h = vrnn(params, h, x)
-    h_t.append(h)
-    
-  h_t = np.array(h_t)  
+  _, h_t = scan(partial(vrnn,params), h, x_t)
   o_t = batch_affine(params, h_t)
   return h_t, o_t
 

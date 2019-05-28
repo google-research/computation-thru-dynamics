@@ -20,6 +20,9 @@ from __future__ import print_function, division, absolute_import
 import jax.numpy as np
 from jax import jit, random, vmap
 from jax.experimental import optimizers
+from jax.lax import scan
+from functools import partial
+import numpy as onp
 
 import lfads_tutorial.distributions as dists
 import lfads_tutorial.utils as utils
@@ -115,7 +118,12 @@ def affine(params, x):
 # I.e. if affine yields n_y_1 = dot(n_W_m, m_x_1), then
 # batch_affine yields t_y_n.
 # And so the vectorization pattern goes for all batch_* functions.
-batch_affine = vmap(affine, in_axes=(None, 0))
+#batch_affine = vmap(affine, in_axes=(None, 0))
+
+
+def batch_affine(params, x):
+  """Implement y = w x + b (batch mode over time)"""
+  return np.einsum('ij,kj->ki', params['w'], x) + params['b']
 
 
 def normed_linear(params, x):
@@ -195,7 +203,8 @@ def gru(params, h, x, bfg=0.5):
   r, u = np.split(ru, 2, axis=0)
   rhx = np.concatenate([r * h, x])
   c = np.tanh(np.dot(params['wCHX'], rhx) + params['bC'] + bfg)
-  return u * h + (1.0 - u) * c
+  r_new = u * h + (1.0 - u) * c
+  return r_new#, r_new
 
 
 def run_rnn(params, rnn, x_t, h0=None):
@@ -235,6 +244,46 @@ def run_bidirectional_rnn(params, fwd_rnn, bwd_rnn, x_t):
   full_enc = np.concatenate([fwd_enc_t, bwd_enc_t], axis=1)
   enc_ends = np.concatenate([bwd_enc_t[0], fwd_enc_t[-1]], axis=1)
   return full_enc, enc_ends
+
+
+'''
+def run_rnn(params, rnn, x_t, h0=None):
+  """Run an RNN module forward in time.
+
+  Arguments:
+    params: dictionary of RNN parameters
+    rnn: function for running RNN one step
+    x_t: np array data for RNN input with leading dim being time
+    h0: initial condition for running rnn, which overwrites param h0
+
+  Returns:
+    np array of rnn applied to time data with leading dim being time"""
+  h = h0 if h0 is not None else params['h0']
+  o_t, h_t = scan(partial(rnn,params), h, x_t)
+  return h_t, o_t
+
+
+def run_bidirectional_rnn(params, fwd_rnn, bwd_rnn, x_t):
+  """Run an RNN encoder backwards and forwards over some time series data.
+
+  Arguments:
+    params: a dictionary of bidrectional RNN encoder parameters
+    fwd_rnn: function for running forward rnn encoding
+    bwd_rnn: function for running backward rnn encoding
+    x_t: np array data for RNN input with leading dim being time
+
+  Returns:
+    tuple of np array concatenated forward, backward encoding, and
+      np array of concatenation of [forward_enc(T), backward_enc(1)]
+  """
+  fwd_enc_t, fwd_enc_end = run_rnn(params['fwd_rnn'], fwd_rnn, x_t)
+  bwd_enc_t, bwd_enc_end = run_rnn(params['bwd_rnn'], bwd_rnn, np.flipud(x_t))
+  bwd_enc_t = np.flipud(bwd_enc_t)
+
+  full_enc = np.concatenate([fwd_enc_t, bwd_enc_t], axis=1)
+  enc_ends = np.concatenate([bwd_enc_end, fwd_enc_end], axis=1)
+  return full_enc, enc_ends
+'''
 
 
 def lfads_params(key, lfads_hps):
@@ -329,7 +378,7 @@ def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
 
   ntime = lfads_hps['ntimesteps']
   key, skeys = utils.keygen(key, 1+2*ntime)
-
+  
   # Since the factors feed back to the controller,
   #    factors_{t-1} -> controller_t -> sample_t -> generator_t -> factors_t
   # is really one big loop and therefor one RNN.
@@ -337,36 +386,42 @@ def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
   g = g0 = dists.diag_gaussian_sample(next(skeys), ic_mean,
                                       ic_logvar, lfads_hps['var_min'])
   f = f0 = np.zeros((lfads_hps['factors_dim'],))
-  c_t = []
-  ii_mean_t = []
-  ii_logvar_t = []
-  ii_t = []
-  gen_t = []
-  factor_t = []
-  for xenc in xenc_t:
+    
+  def lfads_con_gen(params, lfads_hps, keep_rate, carry, xenc):
+    """Run the controller and generator by one time step.
+
+    Arguments:
+      See lfads_decode
+
+    Returns:
+      See lfads_decode
+    """
+
+    c, g, f = carry
+    
     cin = np.concatenate([xenc, f], axis=0)
     c = gru(params['con'], c, cin)
     cout = affine(params['con_out'], c)
     ii_mean, ii_logvar = np.split(cout, 2, axis=0) # inferred input params
     ii = dists.diag_gaussian_sample(next(skeys), ii_mean,
                                     ii_logvar, lfads_hps['var_min'])
+
     g = gru(params['gen'], g, ii)
     g = dropout(g, next(skeys), keep_rate)
     f = normed_linear(params['factors'], g)
-    # Save everything.
-    c_t.append(c)
-    ii_t.append(ii)
-    gen_t.append(g)
-    ii_mean_t.append(ii_mean)
-    ii_logvar_t.append(ii_logvar)
-    factor_t.append(f)
+    
+    return [c, g, f], [c, ii_mean, ii_logvar, ii, g, f]
+  
+  carry = [c, g, f]
+  _, out_t = scan(partial(lfads_con_gen,*(params,lfads_hps,keep_rate)), carry, xenc_t)
+    
+  c_t = out_t[0]
+  ii_mean_t = out_t[1]
+  ii_logvar_t = out_t[2]
+  ii_t = out_t[3]
+  gen_t = out_t[4]
+  factor_t = out_t[5]
 
-  c_t = np.array(c_t)
-  ii_t = np.array(ii_t)
-  gen_t = np.array(gen_t)
-  ii_mean_t = np.array(ii_mean_t)
-  ii_logvar_t = np.array(ii_logvar_t)
-  factor_t = np.array(factor_t)
   lograte_t = batch_affine(params['logrates'], factor_t)
 
   return c_t, ii_mean_t, ii_logvar_t, ii_t, gen_t, factor_t, lograte_t
@@ -402,8 +457,8 @@ def lfads(params, lfads_hps, key, x_t, keep_rate):
           'lograte_t' : lograte_t}
 
 
-lfads_encode_jit = jit(lfads_encode)
-lfads_decode_jit = jit(lfads_decode, static_argnums=(1,))
+#lfads_encode_jit = jit(lfads_encode)
+#lfads_decode_jit = jit(lfads_decode, static_argnums=(1,))
 
 
 # Batching accomplished by vectorized mapping.

@@ -97,8 +97,7 @@ def optimize_lfads_core(key, batch_idx_start, num_batches,
   lower = batch_idx_start
   upper = batch_idx_start + num_batches
   return lax.fori_loop(lower, upper, run_update, opt_state)
-
-
+    
 optimize_lfads_core_jit = jit(optimize_lfads_core, static_argnums=(2,3,4,6,7))
 
 
@@ -142,6 +141,8 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                                             lfads_opt_hps['keep_rate'])
     clipped_grads = optimizers.clip_grads(grads, lfads_opt_hps['max_grad_norm'])
     return opt_update(i, clipped_grads, opt_state)
+
+  #update_w_gc_jit = jit(update_w_gc, static_argnums=(2,3,6))
   
   # Run the optimization, pausing every so often to collect data and
   # print status.
