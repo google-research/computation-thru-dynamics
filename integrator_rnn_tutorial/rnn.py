@@ -18,13 +18,11 @@
 from __future__ import print_function, division, absolute_import
 import datetime
 import h5py
+from functools import partial
 
 import jax.numpy as np
-from jax import grad, jit, vmap
-from jax import random
-from jax import jacrev, jacfwd
+from jax import grad, jit, lax, random, vmap
 from jax.experimental import optimizers
-import jax.experimental.stax as stax
 
 import matplotlib.pyplot as plt
 import numpy as onp  # original CPU-backed NumPy
@@ -56,11 +54,10 @@ def affine(params, x):
   """Implement y = w x + b"""
   return np.dot(params['wO'], x) + params['bO']
 
-# Affine expects n_W_m m_x_1, but passing in t_x_m (has txm dims)
-# So map over first dimension to hand t_x_m.
-# I.e. if affine yields n_y_1 = dot(n_W_m, m_x_1), then
-# batch_affine yields t_y_n.
-# And so the vectorization pattern goes for all batch_* functions.
+
+# Affine expects n_W_m m_x_1, but passing in t_x_m (has txm dims) So
+# map over first dimension to hand t_x_m.  I.e. if affine yields 
+# n_y_1 = dot(n_W_m, m_x_1), then batch_affine yields t_y_n.  
 batch_affine = vmap(affine, in_axes=(None, 0))
 
 
@@ -70,32 +67,24 @@ def vrnn(params, h, x):
   return np.tanh(a)
 
 
-def vrnn_run(params, x_t):
-  """Run the Vanilla RNN T steps, where T is shape[0] of input."""
-  # per-example predictions
-  h = params['h0']  
-  h_t = []
-  for x in x_t:
-    h = vrnn(params, h, x)
-    h_t.append(h)
-    
-  h_t = np.array(h_t)  
-  o_t = batch_affine(params, h_t)
-  return h_t, o_t
+def vrnn_scan(params, h, x):
+  """Run the Vanilla RNN one step, returning (h ,h)."""  
+  h = vrnn(params, h, x)
+  return h, h
 
 
 def vrnn_run_with_h0(params, x_t, h0):
   """Run the Vanilla RNN T steps, where T is shape[0] of input."""
-  # per-example predictions
   h = h0
-  h_t = []
-  for x in x_t:
-    h = vrnn(params, h, x)
-    h_t.append(h)
-    
-  h_t = np.array(h_t)  
+  f = partial(vrnn_scan, params)
+  _, h_t = lax.scan(f, h, x_t)
   o_t = batch_affine(params, h_t)
   return h_t, o_t
+
+
+def vrnn_run(params, x_t):
+  """Run the Vanilla RNN T steps, where T is shape[0] of input."""
+  return vrnn_run_with_h0(params, x_t, params['h0'])
 
   
 # Let's upgrade it to handle batches using `vmap`
@@ -151,7 +140,6 @@ def run_trials(batched_run_fun, inputs_targets_h0s_fun, nbatches, batch_size):
     hiddens.append(h_b)
     outputs.append(o_b)
     targets.append(target_b)
-
     
   trial_dict = {'inputs' : onp.vstack(inputs), 'hiddens' : onp.vstack(hiddens),
                 'outputs' : onp.vstack(outputs), 'targets' : onp.vstack(targets)}
@@ -160,6 +148,7 @@ def run_trials(batched_run_fun, inputs_targets_h0s_fun, nbatches, batch_size):
   else:
     trial_dict['h0s'] = None
   return trial_dict
+
 
 def plot_params(params):
   """ Plot the parameters of the vanilla RNN. """
