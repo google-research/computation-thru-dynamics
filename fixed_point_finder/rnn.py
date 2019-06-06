@@ -18,11 +18,10 @@
 from __future__ import print_function, division, absolute_import
 import datetime
 import h5py
+from functools import partial
 
 import jax.numpy as np
-from jax import grad, jit, vmap
-from jax import random
-from jax import jacrev
+from jax import grad, jacrev, jit, lax, random, vmap
 from jax.experimental import optimizers
 
 import matplotlib.pyplot as plt
@@ -103,6 +102,11 @@ def gru(params, h, x, bfg=0.5):
   return u * h + (1.0 - u) * c
 
 
+def gru_scan(params, h, x, bfg=0.5):
+  """Return the output twice for scan."""
+  h = gru(params, h, x, bfg)
+  return h, h
+
 
 def affine(params, x):
   """Implement y = w x + b
@@ -112,36 +116,11 @@ def affine(params, x):
     x: np array of input"""
   return np.dot(params['wO'], x) + params['bO']
 
-# Affine expects n_W_m m_x_1, but passing in t_x_m (has txm dims)
-# So map over first dimension to hand t_x_m.
-# I.e. if affine yields n_y_1 = dot(n_W_m, m_x_1), then
-# batch_affine yields t_y_n.
-# And so the vectorization pattern goes for all batch_* functions.
+
+# Affine expects n_W_m m_x_1, but passing in t_x_m (has txm dims) So
+# map over first dimension to hand t_x_m.  I.e. if affine yields n_y_1
+# = dot(n_W_m, m_x_1), then batch_affine yields t_y_n.
 batch_affine = vmap(affine, in_axes=(None, 0))
-
-
-
-def gru_run(params, x_t):
-  """Run the Vanilla RNN T steps, where T is shape[0] of input.
-  
-  Args:
-    params: dict of GRU parameters
-    x_t: np array of inputs with dim ntime x u
-
-  Returns: 
-    2-tuple of np arrays (hidden states w dim ntime x n, outputs w dim ntim x o)
-  """
-  
-  # per-example predictions
-  h = params['h0']  
-  h_t = []
-  for x in x_t:
-    h = gru(params, h, x)
-    h_t.append(h)
-    
-  h_t = np.array(h_t)  
-  o_t = batch_affine(params, h_t)
-  return h_t, o_t
 
 
 def gru_run_with_h0(params, x_t, h0):
@@ -156,19 +135,26 @@ def gru_run_with_h0(params, x_t, h0):
     2-tuple of np arrays (hidden states w dim ntime x n, outputs w dim ntim x o)
   """
 
-  h = h0
-  h_t = []
-  for x in x_t:
-    h = gru(params, h, x)
-    h_t.append(h)
-    
-  h_t = np.array(h_t)  
+  f = partial(gru_scan, params)
+  _, h_t = lax.scan(f, h0, x_t)
   o_t = batch_affine(params, h_t)
-  return h_t, o_t
+  return h_t, o_t  
+
+
+def gru_run(params, x_t):
+  """Run the Vanilla RNN T steps, where T is shape[0] of input.
+  
+  Args:
+    params: dict of GRU parameters
+    x_t: np array of inputs with dim ntime x u
+
+  Returns: 
+    2-tuple of np arrays (hidden states w dim ntime x n, outputs w dim ntim x o)
+  """  
+  return gru_run_with_h0(params, x_t, params['h0'])
 
   
-# Let's upgrade it to handle batches using `vmap`
-# Make a batched version of the `predict` function
+# Let's make it handle batches using `vmap`
 batched_rnn_run = vmap(gru_run, in_axes=(None, 0))
 batched_rnn_run_w_h0 = vmap(gru_run_with_h0, in_axes=(None, 0, 0))
   
