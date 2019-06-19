@@ -84,7 +84,7 @@ def optimize_lfads_core(key, batch_idx_start, num_batches,
   key, fkeyg = utils.keygen(key, num_batches) # forward pass
   
   # Begin optimziation loop. Explicitly avoiding a python for-loop
-  # so that jax will not trace it for the sake of a gradient we will not use.  
+  # so that jax will not trace it for the sake of a gradient we will not use.
   def run_update(batch_idx, opt_state):
     kl_warmup = kl_warmup_fun(batch_idx)
     didxs = random.randint(next(dkeyg), [lfads_hps['batch_size']], 0,
@@ -142,7 +142,8 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                                             lfads_opt_hps['keep_rate'])
     clipped_grads = optimizers.clip_grads(grads, lfads_opt_hps['max_grad_norm'])
     return opt_update(i, clipped_grads, opt_state)
-  
+
+ 
   # Run the optimization, pausing every so often to collect data and
   # print status.
   batch_size = lfads_hps['batch_size']
@@ -178,9 +179,19 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
     # Saving, printing.
     all_tlosses.append(tlosses)
     all_elosses.append(elosses)
-    s = "Batches {}-{} in {:0.2f} sec, Step size: {:0.5f}, Training loss {:0.0f}, Eval loss {:0.0f}"
-    print(s.format(batch_idx_start+1, batch_pidx, batch_time,
-                   decay_fun(batch_pidx), tlosses['total'], elosses['total']))
+    s1 = "Batches {}-{} in {:0.2f} sec, Step size: {:0.5f}"
+    s2 = "    Training losses {:0.0f} = NLL {:0.0f} + KL IC {:0.0f},{:0.0f} + KL II {:0.0f},{:0.0f} + L2 {:0.2f}"
+    s3 = "        Eval losses {:0.0f} = NLL {:0.0f} + KL IC {:0.0f},{:0.0f} + KL II {:0.0f},{:0.0f} + L2 {:0.2f}"
+    print(s1.format(batch_idx_start+1, batch_pidx, batch_time,
+                   decay_fun(batch_pidx)))
+    print(s2.format(tlosses['total'], tlosses['nlog_p_xgz'],
+                    tlosses['kl_g0_prescale'], tlosses['kl_g0'],
+                    tlosses['kl_ii_prescale'], tlosses['kl_ii'],
+                    tlosses['l2']))
+    print(s3.format(elosses['total'], elosses['nlog_p_xgz'],
+                    elosses['kl_g0_prescale'], elosses['kl_g0'],
+                    elosses['kl_ii_prescale'], elosses['kl_ii'],
+                    elosses['l2']))
 
     tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
     elosses_thru_training = utils.merge_losses_dicts(all_elosses)

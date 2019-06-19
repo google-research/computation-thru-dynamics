@@ -17,8 +17,10 @@
 
 
 from __future__ import print_function, division, absolute_import
+from functools import partial
+
 import jax.numpy as np
-from jax import jit, random, vmap
+from jax import jit, lax, random, vmap
 from jax.experimental import optimizers
 
 import lfads_tutorial.distributions as dists
@@ -179,17 +181,17 @@ def run_dropout(x_t, key, keep_rate):
   return batch_dropout(x_t, keys, keep_rate)
 
 
-def gru(params, h, x, bfg=0.5):
+def gru(params, h, x):
   """Implement the GRU equations.
 
   Arguments:
     params: dictionary of GRU parameters
     h: np array of  hidden state
     x: np array of input
-    bfg: bias on forget gate (useful for learning if > 0.0)
 
   Returns:
     np array of hidden state after GRU update"""
+  bfg = 0.5
   hx = np.concatenate([h, x], axis=0)
   ru = sigmoid(np.dot(params['wRUHX'], hx) + params['bRU'])
   r, u = np.split(ru, 2, axis=0)
@@ -198,23 +200,34 @@ def gru(params, h, x, bfg=0.5):
   return u * h + (1.0 - u) * c
 
 
-def run_rnn(params, rnn, x_t, h0=None):
+def make_rnn_for_scan(rnn, params):
+  """Scan requires f(h, x) -> h, h, in this application.
+  Args: 
+    rnn : f with sig (params, h, x) -> h
+    params: params in f() sig.
+
+  Returns: 
+    f adapted for scan
+  """
+  def rnn_for_scan(h, x):
+    h = rnn(params, h, x)
+    return h, h
+  return rnn_for_scan
+
+
+def run_rnn(rnn_for_scan, x_t, h0):
   """Run an RNN module forward in time.
 
   Arguments:
-    params: dictionary of RNN parameters
-    rnn: function for running RNN one step
+    rnn_for_scan: function for running RNN one step (h, x) -> (h, h)
+      The params already embedded in the function.
     x_t: np array data for RNN input with leading dim being time
-    h0: initial condition for running rnn, which overwrites param h0
+    h0: initial condition for running rnn
 
   Returns:
     np array of rnn applied to time data with leading dim being time"""
-  h = h0 if h0 is not None else params['h0']
-  h_t = []
-  for x in x_t:
-    h = rnn(params, h, x)
-    h_t.append(h)
-  return np.array(h_t)
+  _, h_t = lax.scan(rnn_for_scan, h0, x_t)
+  return h_t
 
 
 def run_bidirectional_rnn(params, fwd_rnn, bwd_rnn, x_t):
@@ -230,8 +243,12 @@ def run_bidirectional_rnn(params, fwd_rnn, bwd_rnn, x_t):
     tuple of np array concatenated forward, backward encoding, and
       np array of concatenation of [forward_enc(T), backward_enc(1)]
   """
-  fwd_enc_t = run_rnn(params['fwd_rnn'], fwd_rnn, x_t)
-  bwd_enc_t = np.flipud(run_rnn(params['bwd_rnn'], bwd_rnn, np.flipud(x_t)))
+  fwd_rnn_scan = make_rnn_for_scan(fwd_rnn, params['fwd_rnn'])
+  bwd_rnn_scan = make_rnn_for_scan(bwd_rnn, params['bwd_rnn'])
+
+  fwd_enc_t = run_rnn(fwd_rnn_scan, x_t, params['fwd_rnn']['h0'])
+  bwd_enc_t = np.flipud(run_rnn(bwd_rnn_scan, np.flipud(x_t),
+                                params['bwd_rnn']['h0']))
   full_enc = np.concatenate([fwd_enc_t, bwd_enc_t], axis=1)
   enc_ends = np.concatenate([bwd_enc_t[0], fwd_enc_t[-1]], axis=1)
   return full_enc, enc_ends
@@ -308,6 +325,65 @@ def lfads_encode(params, lfads_hps, key, x_t, keep_rate):
   return ic_mean, ic_logvar, xenc_t
 
 
+def lfads_decode_one_step(params, lfads_hps, key, keep_rate, c, f, g, xenc):
+  """Run the LFADS network from latent variables to log rates one time step.
+
+  Arguments:
+    params: a dictionary of LFADS parameters
+    lfads_hps: a dictionary of LFADS hyperparameters
+    key: random.PRNGKey for random bits
+    keep_rate: dropout keep rate
+    c: controller state at time step t-1
+    g: generator state at time step t-1
+    f: factors at time step t-1
+    xenc: np array bidirectional encoding at time t of input (x_t)
+
+  Returns:
+    7-tuple of np arrays all with leading dim being time,
+      controller hidden state, generator hidden state, factors, 
+      inferred input (ii) sample, ii mean, ii log var, log rates
+  """
+  keys = random.split(key, 2)
+  cin = np.concatenate([xenc, f], axis=0)
+  c = gru(params['con'], c, cin)
+  cout = affine(params['con_out'], c)
+  ii_mean, ii_logvar = np.split(cout, 2, axis=0) # inferred input params
+  ii = dists.diag_gaussian_sample(keys[0], ii_mean,
+                                  ii_logvar, lfads_hps['var_min'])
+  g = gru(params['gen'], g, ii)
+  g = dropout(g, keys[1], keep_rate)
+  f = normed_linear(params['factors'], g)
+  lograte = affine(params['logrates'], f)
+  return c, g, f, ii, ii_mean, ii_logvar, lograte
+    
+
+def lfads_decode_one_step_scan(params, lfads_hps, keep_rate, state, key_n_xenc):
+  """Run the LFADS network one step, prepare the inputs and outputs for scan.
+
+  Arguments:
+    params: a dictionary of LFADS parameters
+    lfads_hps: a dictionary of LFADS hyperparameters
+    keep_rate: dropout keep rate
+    state: (controller state at time step t-1, generator state at time step t-1, 
+            factors at time step t-1)
+    key_n_xenc: (random key, np array bidirectional encoding at time t of input (x_t))
+
+  Returns: 2-tuple of state and state plus returned values
+    ((controller state, generator state, factors), 
+    (7-tuple of np arrays all with leading dim being time,
+      controller hidden state, generator hidden state, factors, 
+      inferred input (ii) sample, ii mean, ii log var, 
+      log rate))
+  """
+  key, xenc = key_n_xenc
+  c, g, f = state
+  state_and_returns = lfads_decode_one_step(params, lfads_hps, key, keep_rate,
+                                            c, f, g, xenc)
+  c, g, f, ii, ii_mean, ii_logvar, lograte = state_and_returns
+  state = (c, g, f)
+  return state, state_and_returns
+
+
 def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
   """Run the LFADS network from latent variables to log rates.
 
@@ -328,48 +404,26 @@ def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
   """
 
   ntime = lfads_hps['ntimesteps']
-  key, skeys = utils.keygen(key, 1+2*ntime)
+  key, skeys = utils.keygen(key, 2)
 
   # Since the factors feed back to the controller,
   #    factors_{t-1} -> controller_t -> sample_t -> generator_t -> factors_t
   # is really one big loop and therefor one RNN.
-  c = c0 = params['con']['h0']
-  g = g0 = dists.diag_gaussian_sample(next(skeys), ic_mean,
-                                      ic_logvar, lfads_hps['var_min'])
-  f = f0 = np.zeros((lfads_hps['factors_dim'],))
-  c_t = []
-  ii_mean_t = []
-  ii_logvar_t = []
-  ii_t = []
-  gen_t = []
-  factor_t = []
-  for xenc in xenc_t:
-    cin = np.concatenate([xenc, f], axis=0)
-    c = gru(params['con'], c, cin)
-    cout = affine(params['con_out'], c)
-    ii_mean, ii_logvar = np.split(cout, 2, axis=0) # inferred input params
-    ii = dists.diag_gaussian_sample(next(skeys), ii_mean,
-                                    ii_logvar, lfads_hps['var_min'])
-    g = gru(params['gen'], g, ii)
-    g = dropout(g, next(skeys), keep_rate)
-    f = normed_linear(params['factors'], g)
-    # Save everything.
-    c_t.append(c)
-    ii_t.append(ii)
-    gen_t.append(g)
-    ii_mean_t.append(ii_mean)
-    ii_logvar_t.append(ii_logvar)
-    factor_t.append(f)
+  c0 = params['con']['h0']
+  g0 = dists.diag_gaussian_sample(next(skeys), ic_mean, ic_logvar,
+                                  lfads_hps['var_min'])
+  f0 = np.zeros((lfads_hps['factors_dim'],))
 
-  c_t = np.array(c_t)
-  ii_t = np.array(ii_t)
-  gen_t = np.array(gen_t)
-  ii_mean_t = np.array(ii_mean_t)
-  ii_logvar_t = np.array(ii_logvar_t)
-  factor_t = np.array(factor_t)
-  lograte_t = batch_affine(params['logrates'], factor_t)
-
-  return c_t, ii_mean_t, ii_logvar_t, ii_t, gen_t, factor_t, lograte_t
+  # Make all the randomness for all T steps at once, it's more efficient.
+  # The random keys get passed into scan along with the input, so the input
+  # becomes of a 2-tuple (keys, actual input).
+  T = xenc_t.shape[0]
+  keys_t = random.split(next(skeys), T)
+  
+  state0 = (c0, g0, f0)
+  decoder = partial(lfads_decode_one_step_scan, *(params, lfads_hps, keep_rate))
+  _, state_and_returns_t = lax.scan(decoder, state0, (keys_t, xenc_t))
+  return state_and_returns_t
 
 
 def lfads(params, lfads_hps, key, x_t, keep_rate):
@@ -391,10 +445,10 @@ def lfads(params, lfads_hps, key, x_t, keep_rate):
   ic_mean, ic_logvar, xenc_t = \
       lfads_encode(params, lfads_hps, next(skeys), x_t, keep_rate)
 
-  c_t, ii_mean_t, ii_logvar_t, ii_t, gen_t, factor_t, lograte_t = \
+  c_t, gen_t, factor_t, ii_t, ii_mean_t, ii_logvar_t, lograte_t = \
       lfads_decode(params, lfads_hps, next(skeys), ic_mean, ic_logvar,
                    xenc_t, keep_rate)
-
+  
   # As this is tutorial code, we're passing everything around.
   return {'xenc_t' : xenc_t, 'ic_mean' : ic_mean, 'ic_logvar' : ic_logvar,
           'ii_t' : ii_t, 'c_t' : c_t, 'ii_mean_t' : ii_mean_t,
@@ -404,7 +458,7 @@ def lfads(params, lfads_hps, key, x_t, keep_rate):
 
 lfads_encode_jit = jit(lfads_encode)
 lfads_decode_jit = jit(lfads_decode, static_argnums=(1,))
-
+lfads_jit = jit(lfads, static_argnums=(1,))
 
 # Batching accomplished by vectorized mapping.
 # We simultaneously map over random keys for forward-pass randomness
@@ -429,8 +483,8 @@ def lfads_losses(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
 
   B = lfads_hps['batch_size']
   key, skeys = utils.keygen(key, 2)
-  keys = random.split(next(skeys), B)
-  lfads = batch_lfads(params, lfads_hps, keys, x_bxt, keep_rate)
+  keys_b = random.split(next(skeys), B)
+  lfads = batch_lfads(params, lfads_hps, keys_b, x_bxt, keep_rate)
 
   # Sum over time and state dims, average over batch.
   # KL - g0
@@ -445,8 +499,8 @@ def lfads_losses(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
   # KL - Inferred input
   ii_post_mean_bxt = lfads['ii_mean_t']
   ii_post_var_bxt = lfads['ii_logvar_t']
-  keys = random.split(next(skeys), B)
-  kl_loss_ii_b = dists.batch_kl_gauss_ar1(keys, ii_post_mean_bxt,
+  keys_b = random.split(next(skeys), B)
+  kl_loss_ii_b = dists.batch_kl_gauss_ar1(keys_b, ii_post_mean_bxt,
                                           ii_post_var_bxt, params['ii_prior'],
                                           lfads_hps['var_min'])
   kl_loss_ii_prescale = np.sum(kl_loss_ii_b) / B
@@ -501,7 +555,8 @@ def posterior_sample_and_average(params, lfads_hps, key, x_txd):
   batch_size = lfads_hps['batch_size']
   skeys = random.split(key, batch_size)  
   x_bxtxd = np.repeat(np.expand_dims(x_txd, axis=0), batch_size, axis=0)
-  lfads_dict = batch_lfads(params, lfads_hps, skeys, x_bxtxd, 1.0)
+  keep_rate = 1.0
+  lfads_dict = batch_lfads(params, lfads_hps, skeys, x_bxtxd, keep_rate)
   return utils.average_lfads_batch(lfads_dict)
 
 

@@ -27,13 +27,13 @@ from sklearn.decomposition import PCA
 def plot_data_pca(data_dict):
   """Plot the PCA skree plot of the hidden units in the integrator RNN."""
   f = plt.figure()
-  ndata = data_dict['hiddens'].shape[0]
+  ndata, ntime, nhidden = data_dict['hiddens'].shape
 
-  print('Number of data examples: ', data_dict['hiddens'].shape[0])
-  print('Number of timesteps: ', data_dict['hiddens'].shape[1])
-  print('Number of data dimensions: ', data_dict['hiddens'].shape[2])
+  print('Number of data examples: ', ndata)
+  print('Number of timesteps: ', ntime)
+  print('Number of data dimensions: ', nhidden)
   pca = PCA(n_components=100)
-  pca.fit(onp.reshape(data_dict['hiddens'], [10240 * 25, 100]))
+  pca.fit(onp.reshape(data_dict['hiddens'], [ndata * ntime, nhidden]))
 
   plt.plot(onp.arange(1, 16), onp.cumsum(pca.explained_variance_ratio_)[0:15],
            '-o');
@@ -200,7 +200,7 @@ def plot_lfads(x_txd, avg_lfads_dict, data_dict=None, dd_bidx=None,
   plt.legend(('LFADS inferred input', 'rescaled true input to integrator RNN'))
   
   plt.subplot(313)
-  ntoplot=6
+  ntoplot=8
   a = 0.25
   plt.plot(rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'b')
   plt.plot(true_rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'r')
