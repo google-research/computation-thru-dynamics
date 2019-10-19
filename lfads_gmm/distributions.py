@@ -19,8 +19,10 @@
 from __future__ import print_function, division, absolute_import
 
 
+from jax import jit, lax, pmap, random, vmap
+from jax.nn import log_softmax, softmax
 import jax.numpy as np
-from jax import jit, vmap, pmap, random
+from jax.scipy.special import logsumexp
 
 
 def poisson_log_likelihood(x, log_rate):
@@ -130,8 +132,10 @@ def kl_gauss_gauss(z_mean, z_logvar, prior_z_mean, prior_z_logvar,
                  - 1.0))
 
 
-gmm_diag_gaussian_log_likelihood = vmap(diag_gaussian_log_likelihood, (None, 0, 0, None))
+batch_kl_gauss_gauss = vmap(kl_gauss_gauss, in_axes=(0, 0, 1, 1, None))
 
+
+gmm_diag_gaussian_log_likelihood = vmap(diag_gaussian_log_likelihood, (None, 0, 0, None))
 
 
 def kl_sample_gmm(key, z_mean_u, z_logvar_u,
@@ -146,23 +150,24 @@ def kl_sample_gmm(key, z_mean_u, z_logvar_u,
 
   Arguments:
     key: random.PRNGKey for random bits
+    z_mean_u: mean from posterior gaussian distribution with dim u
+    z_logvar_u: log variance from posterior gaussian distribution with dim u
     resps_c: np.array with shape c, responsibilities in the GMM, \pi in
       the above formula is softmax(resps_c).
     means_c: np.array with shape c, means in GMM
     logvar_c: np.array with shape c, log variances in GMM
     varmin: Minimum variance allowed (numerially useful).
 
-  Args:
-    z_mean: mean of posterior, z ~ q(z|x)
-    z_logvar: logvar of posterior
-    prior_z_mean: mean of prior, z ~ p(z)
-    prior_z_logvar: logvar of prior
-    varmin: minimum variance allowed, useful for numerical stability
+  Returns:
+    Single estimate of the KL divergence.
   """
-  # This version does not treat the u index as a multidim gaussian and so does
-  # not sum first. I think that was just a bug. Here each dim of u is compared
-  # and treated separately in the kl estimate, with the sum ultimately happening
-  # at the end of the kl estimate.
+
+  # Handle case of one gaussian in the mixture with closed form equations.
+  if resps_c.shape[0] == 1:
+    return kl_gauss_gauss(z_mean_u, z_logvar_u,
+                          prior_z_mean_cxu[0,:], prior_z_logvar[0,:], varmin)
+
+  # Otherwise sample the KL
   ll = diag_gaussian_log_likelihood
   gmm_ll = gmm_diag_gaussian_log_likelihood
   sample = diag_gaussian_sample
@@ -202,13 +207,15 @@ def kl_samples_gmm(keys_sx2, z_mean_u, z_logvar_u, resps_c,
   return kl
 
 
-
 # Returns batch things, so running over (keys_bx..., z_mean_bx..., z_logvar_bx...)
 # keys come in with shape (B, S, 2)
-batch_kl_sample_gmm = vmap(kl_samples_gmm, in_axes=(0, None, 0, 0, None, None, None))
+batch_kl_sample_gmm = vmap(kl_samples_gmm, in_axes=(0, 0, 0, None, None, None, None))
+batch_kl_sample_gmm_jit = jit(batch_kl_sample_gmm)
 
 
-
+##
+## The following functions using pmap are prototypes and not yet used.
+##
 def batch_kl_sample_gmm_pmap_pre(keys_8xbd8xsx2, z_mean_8xbd8xu,
                                  z_logvar_8xbd8xu, resps_c, prior_z_mean_cxu,
                                  prior_z_logvar_cxu, varmin):
@@ -282,6 +289,4 @@ def batch_kl_sample_gmm_pmap(keys_bxsx2, z_mean_bxu, z_logvar_bxu, resps_c,
                                       prior_z_logvar_cxu, varmin)
 
 
-batch_kl_sample_gmm_jit = jit(batch_kl_sample_gmm)
 batch_kl_sample_gmm_pmap_jit = jit(batch_kl_sample_gmm_pmap)
-batch_kl_gauss_gauss = vmap(kl_gauss_gauss, in_axes=(0, 0, 1, 1, None))

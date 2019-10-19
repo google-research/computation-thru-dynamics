@@ -21,16 +21,17 @@ from __future__ import print_function, division, absolute_import
 import datetime
 import h5py
 
-import jax.numpy as np
 from jax import grad, jit, lax, random
 from jax.experimental import optimizers
+from jax.nn import softmax
+import jax.numpy as np
 
 import matplotlib.pyplot as plt
 import numpy as onp  # original CPU-backed NumPy
 import sklearn
 
-#import lfads_tutorial.lfads as lfads
-#import lfads_tutorial.utils as utils
+import lfads_gmm.lfads as lfads
+import lfads_gmm.utils as utils
 
 import time
 
@@ -80,22 +81,27 @@ def optimize_lfads_core(key, batch_idx_start, num_batches,
   Returns:
     opt_state: the jax optimizer state, containing params and optimizer state"""
 
-  keys = random.split(key, 2)
-  dkeys = random.split(keys[0], num_batches)
-  fkeys = random.split(keys[1], num_batches)
-
   # Begin optimziation loop. Explicitly avoiding a python for-loop
   # so that jax will not trace it for the sake of a gradient we will not use.
-  def run_update(batch_idx, opt_state):
+  def run_update(batch_idx, opt_state_n_keys):
+    opt_state, keys = opt_state_n_keys
+    dkey, fkey = keys
+    dkey = random.fold_in(dkey, batch_idx)
+    fkey = random.fold_in(fkey, batch_idx)    
     kl_warmup = kl_warmup_fun(batch_idx)
-    x_bxt = train_data_fun(dkeys[batch_idx]).astype(np.float32)
+    x_bxt = train_data_fun(dkey).astype(np.float32)
     opt_state = update_fun(batch_idx, opt_state, lfads_hps, lfads_opt_hps,
-                           fkeys[batch_idx], x_bxt, kl_warmup)
-    return opt_state
+                           fkey, x_bxt, kl_warmup)
+    opt_state_n_keys = (opt_state, (dkey, fkey))
+    return opt_state_n_keys
 
+  dkey, fkey = random.split(key, 2)
+  opt_state_n_keys = (opt_state, (dkey, fkey))
   lower = batch_idx_start
   upper = batch_idx_start + num_batches
-  return lax.fori_loop(lower, upper, run_update, opt_state)
+  opt_state_n_keys = lax.fori_loop(lower, upper, run_update, opt_state_n_keys)
+  opt_state, _ = opt_state_n_keys
+  return opt_state
 
 
 optimize_lfads_core_jit = jit(optimize_lfads_core, static_argnums=(2,3,4,6,7,8))
@@ -138,8 +144,8 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                   kl_warmup):
     """Update fun for gradients, includes gradient clipping."""
     params = get_params(opt_state)
-    grads = grad(lfads_training_loss_jit)(params, lfads_hps, key, x_bxt,
-                                          kl_warmup, lfads_opt_hps['keep_rate'])
+    grads = grad(lfads.lfads_training_loss_jit)(params, lfads_hps, key, x_bxt,
+                                                kl_warmup, lfads_opt_hps['keep_rate'])
     clipped_grads = optimizers.clip_grads(grads, lfads_opt_hps['max_grad_norm'])
     return opt_update(i, clipped_grads, opt_state)
 
@@ -171,17 +177,17 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
     #didxs = onp.random.randint(0, train_data.shape[0], batch_size)
     #x_bxt = train_data[didxs].astype(onp.float32)
     x_bxt = train_data_fun(dtkey1)
-    tlosses = lfads_losses_jit(params, lfads_hps, dtkey2, x_bxt,
-                               kl_warmup, 1.0)
+    tlosses = lfads.lfads_losses_jit(params, lfads_hps, dtkey2, x_bxt,
+                                     kl_warmup, 1.0)
 
     # Evaluation loss
     #didxs = onp.random.randint(0, eval_data.shape[0], batch_size)
     #ex_bxt = eval_data[didxs].astype(onp.float32)
     ex_bxt = eval_data_fun(dekey1)
-    elosses = lfads_losses_jit(params, lfads_hps, dekey2, ex_bxt,
-                               kl_warmup, 1.0)
+    elosses = lfads.lfads_losses_jit(params, lfads_hps, dekey2, ex_bxt,
+                                     kl_warmup, 1.0)
     # Saving, printing.
-    resps = softmax(params['prior']['resp'])
+    resps = softmax(params['gmm']['resp'])
     rmin = onp.min(resps)
     rmax = onp.max(resps)
     rmean = onp.mean(resps)
@@ -203,8 +209,8 @@ def optimize_lfads(key, init_params, lfads_hps, lfads_opt_hps,
                     elosses['l2'], elosses['ii_l2']))
     print(s4.format(rmin, rmean, rmax, rstd))
 
-    tlosses_thru_training = merge_losses_dicts(all_tlosses)
-    elosses_thru_training = merge_losses_dicts(all_elosses)
+    tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
+    elosses_thru_training = utils.merge_losses_dicts(all_elosses)
     optimizer_details = {'tlosses' : tlosses_thru_training,
                          'elosses' : elosses_thru_training}
 

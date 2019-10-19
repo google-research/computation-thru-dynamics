@@ -15,8 +15,6 @@
 
 """LFADS architecture and loss functions."""
 
-# TODO(sussillo): tanh(g0) and tanh(ii) optional
-
 from __future__ import print_function, division, absolute_import
 from functools import partial
 
@@ -24,22 +22,43 @@ import jax.numpy as np
 from jax import jit, lax, random, vmap
 from jax.experimental import optimizers
 
-#import lfads_tutorial.distributions as dists
-#import lfads_tutorial.utils as utils
+import lfads_gmm.distributions as dists
+import lfads_gmm.utils as utils
 
 
 def sigmoid(x):
   return 0.5 * (np.tanh(x / 2.) + 1)
 
 
-def gmm_params(key, size, dim, mean_std=0.3, var_mean=0.2, var_std=0.025):
+def ib_params(key, num, dim, mean_std=0.3, var_mean=0.2, var_std=0.025):
+  """Params for inferred biases to the generator model.
+
+  Arguments:
+    key: random.PRNGKey for random bits
+    num: number of biases
+    dim: dimension of bias
+    mean_std: standard deviation of random means around 0
+    var_mean : mean of variance of each gaussian
+    var_std: standard deviation of the mean of each gaussian
+
+  Returns:
+    a dictionary of gaussian params for inferered biases
+  """
+  keys = random.split(key, 2)
+  mean_params = mean_std * random.normal(keys[0], shape=(num, dim))
+  logvar_params = np.log(var_mean * np.ones((num, dim))
+                         + var_std * random.normal(keys[1], shape=(num, dim)))
+  return {'mean' : mean_params, 'logvar' : logvar_params}
+
+
+def gmm_params(key, num, dim, mean_std=0.3, var_mean=0.2, var_std=0.025):
   """Params for Gaussian mixture model.
 
   Arguments:
     key: random.PRNGKey for random bits
     num: number of gaussians in mixture
     dim: dimension of gaussian
-    mean_scale: standard deviation of random means around 0
+    mean_std: standard deviation of random means around 0
     var_mean : mean of variance of each gaussian
     var_std: standard deviation of the mean of each gaussian
 
@@ -48,7 +67,7 @@ def gmm_params(key, size, dim, mean_std=0.3, var_mean=0.2, var_std=0.025):
   """
   keys = random.split(key, 2)
   resp_logits = np.ones((num,))       # always put into softmax
-  mean_params = mean_scale * random.normal(keys[0], shape=(num, dim))
+  mean_params = mean_std * random.normal(keys[0], shape=(num, dim))
   logvar_params = np.log(var_mean * np.ones((num, dim))
                          + var_std * random.normal(keys[1], shape=(num, dim)))
   return {'resp' : resp_logits, 'mean' : mean_params, 'logvar' : logvar_params}
@@ -288,7 +307,7 @@ def lfads_params(key, lfads_hps):
   Returns:
     a dictionary of LFADS parameters
   """
-  keys = random.split(key, 8)
+  keys = random.split(key, 9)
 
   data_dim = lfads_hps['data_dim']
   ntimesteps = lfads_hps['ntimesteps']
@@ -299,23 +318,27 @@ def lfads_params(key, lfads_hps):
   factors_dim = lfads_hps['factors_dim']
   batch_size = lfads_hps['batch_size']
   ic_dim = enc_dim              # Could make a different HP via a linear layer
-  z_dim = ic_dim + ntimesteps * ii_dim
+  ib_dim = lfads_hps['ib_dim']  # inferred bias is a static input to generator
+  z_dim = ic_dim + ib_dim + ntimesteps * ii_dim
   gmm_size = lfads_hps['gmm_size']
 
   ic_enc_params = {'fwd_rnn' : gru_params(keys[0], enc_dim, data_dim),
                    'bwd_rnn' : gru_params(keys[1], enc_dim, data_dim)}
-  gen_ic_params = affine_params(keys[2], 2*gen_dim, 2*enc_dim) # m, v <- bi
-  prior_params = gmm_params(keys[3], gmm_size, z_dim)
-  con_params = gru_params(keys[4], con_dim, 2*enc_dim + factors_dim + ii_dim)
-  con_out_params = affine_params(keys[5], 2*ii_dim, con_dim)   #m, v
-  gen_params = gru_params(keys[6], gen_dim, ii_dim)
-  factors_params = linear_params(keys[7], factors_dim, gen_dim)
-  lograte_params = affine_params(keys[8], data_dim, factors_dim)
+  post_ib_params = affine_params(keys[2], 2*ib_dim, 2*enc_dim) # m, v <- bi  
+  post_ic_params = affine_params(keys[3], 2*gen_dim, 2*enc_dim) # m, v <- bi
+  
+  prior_params = gmm_params(keys[4], gmm_size, z_dim)
+  con_params = gru_params(keys[5], con_dim, 2*enc_dim + factors_dim + ii_dim)
+  con_out_params = affine_params(keys[6], 2*ii_dim, con_dim)   #m, v
+  gen_params = gru_params(keys[7], gen_dim, ii_dim + ib_dim)
+  factors_params = linear_params(keys[8], factors_dim, gen_dim)
+  lograte_params = affine_params(keys[9], data_dim, factors_dim)
 
   return {'ic_enc' : ic_enc_params,
-          'gen_ic' : gen_ic_params,
+          'post_ib' : post_ib_params,
+          'post_ic' : post_ic_params,
           'con' : con_params, 'con_out' : con_out_params,
-          'prior' : prior_params,
+          'gmm' : prior_params,
           'gen' : gen_params, 'factors' : factors_params,
           'f0' : np.zeros((lfads_hps['factors_dim'],)),
           'ii0' : np.zeros((lfads_hps['ii_dim'],)),
@@ -340,17 +363,22 @@ def lfads_encode(params, lfads_hps, key, x_t, keep_rate):
 
   # Encode the input
   x_t = run_dropout(x_t, keys[0], keep_rate)
-  con_ins_t, gen_pre_ics = run_bidirectional_rnn(params['ic_enc'],
-                                                 gru, gru, x_t)
+  con_ins_t, gen_pre_ibs_ics = run_bidirectional_rnn(params['ic_enc'],
+                                                     gru, gru, x_t)
   # Push through to posterior mean and variance for initial conditions.
   xenc_t = dropout(con_ins_t, keys[1], keep_rate)
-  gen_pre_ics = dropout(gen_pre_ics, keys[2], keep_rate)
-  ic_gauss_params = affine(params['gen_ic'], gen_pre_ics)
+  gen_pre_ibs_ics = dropout(gen_pre_ibs_ics, keys[2], keep_rate)
+
+  ib_gauss_params = affine(params['post_ib'], gen_pre_ibs_ics)
+  ib_mean, ib_logvar = np.split(ib_gauss_params, 2, axis=0)
+  
+  ic_gauss_params = affine(params['post_ic'], gen_pre_ibs_ics)
   ic_mean, ic_logvar = np.split(ic_gauss_params, 2, axis=0)
-  return ic_mean, ic_logvar, xenc_t
+  return ib_mean, ib_logvar, ic_mean, ic_logvar, xenc_t
 
 
-def lfads_decode_one_step(params, lfads_hps, key, keep_rate, c, ii, f, g, xenc):
+def lfads_decode_one_step(params, lfads_hps, key, keep_rate, c, ii, ib, f, g,
+                          xenc):
   """Run the LFADS network from latent variables to log rates one time step.
 
   Arguments:
@@ -359,49 +387,55 @@ def lfads_decode_one_step(params, lfads_hps, key, keep_rate, c, ii, f, g, xenc):
     key: random.PRNGKey for random bits
     keep_rate: dropout keep rate
     c: controller state at time step t-1
+    ii: inferred input from time step t-1
+    ib: inferred bias (it's static)
     g: generator state at time step t-1
-    ii: inferred input from time step t-1 (autoregressive sampling here)
     f: factors at time step t-1
     xenc: np array bidirectional encoding at time t of input (x_t)
 
   Returns:
-    7-tuple of np arrays all with leading dim being time,
-      controller hidden state, generator hidden state, factors,
-      inferred input (ii) sample, ii mean, ii log var, log rates
+    8-tuple of np arrays all with leading dim being time,
+      (controller hidden state, generator hidden state, factors,
+      inferred input (ii) sample, inferred bias (ib) sample from earlier, 
+      ii mean, ii log var, log rates)
   """
   keys = random.split(key, 2)
   cin = np.concatenate([xenc, f, ii], axis=0)
   c = gru(params['con'], c, cin)
   cout = affine(params['con_out'], c)
   ii_mean, ii_logvar = np.split(cout, 2, axis=0) # inferred input params
-  ii = np.tanh(diag_gaussian_sample(keys[0], ii_mean, ii_logvar, lfads_hps['var_min']))
-  g = gru(params['gen'], g, ii)
+  ii = dists.diag_gaussian_sample(keys[0], ii_mean, ii_logvar,
+                                          lfads_hps['var_min'])
+  ii = np.where(lfads_hps['do_tanh_latents'], np.tanh(ii), ii)
+  g = gru(params['gen'], g, np.concatenate([ii, ib], axis=0))
   g = dropout(g, keys[1], keep_rate)
   f = normed_linear(params['factors'], g)
   lograte = affine(params['logrates'], f)
-  return c, g, f, ii, ii_mean, ii_logvar, lograte
+  return c, g, f, ii, ib, ii_mean, ii_logvar, lograte
 
 
-def lfads_decode_prior_one_step(params, lfads_hps, key, ii, f, g):
+def lfads_decode_prior_one_step(params, lfads_hps, key, ii, ib, f, g):
   """Run the LFADS network from latent variables to log rates one time step.
 
   Arguments:
     params: a dictionary of LFADS parameters
     lfads_hps: a dictionary of LFADS hyperparameters
     key: random.PRNGKey for random bits
+    ii: inferred input from time step t-1 
+    ib: inferred bias (static)
     g: generator state at time step t-1
-    ii: inferred input from time step t-1 (autoregressive sampling here)
     f: factors at time step t-1
 
   Returns:
-    7-tuple of np arrays all with leading dim being time,
-      controller hidden state, generator hidden state, factors,
-      inferred input (ii) sample, ii mean, ii log var, log rates
+    5-tuple of np arrays all with leading dim being time,
+      (generator hidden state, factors,
+      inferred input (ii) sample, inferred bias sample, log rates)
   """
-  g = gru(params['gen'], g, ii) # ii tanh'd at sample of multidim gaussian
+  ii = np.where(lfads_hps['do_tanh_latents'], np.tanh(ii), ii)
+  g = gru(params['gen'], g, np.concatenate([ii, ib], axis=0)) 
   f = normed_linear(params['factors'], g)
   lograte = affine(params['logrates'], f)
-  return g, f, ii, lograte
+  return g, f, ii, ib, lograte
 
 
 def lfads_decode_one_step_scan(params, lfads_hps, keep_rate, state, key_n_xenc):
@@ -411,23 +445,23 @@ def lfads_decode_one_step_scan(params, lfads_hps, keep_rate, state, key_n_xenc):
     params: a dictionary of LFADS parameters
     lfads_hps: a dictionary of LFADS hyperparameters
     keep_rate: dropout keep rate
-    state: (controller state at time step t-1, generator state at time step t-1,
-            factors at time step t-1)
+    state: (controller state at time step t-1, inferred input at t-1, 
+            inferred_bias, generator state at time step t-1,  factors 
+            at time step t-1)
     key_n_xenc: (random key, np array bidirectional encoding at time t of input (x_t))
 
-  Returns: 2-tuple of state and state plus returned values
-    ((controller state, inferred inputs, generator state, factors),
-    (7-tuple of np arrays all with leading dim being time,
-      controller hidden state, generator hidden state, factors,
-      inferred input (ii) sample, ii mean, ii log var,
-      log rate))
+  Returns: 2-tuple of state and state plus returned values. The state and
+    is an 8-tuple of np arrays all with leading dim being time:
+      (controller hidden state, generator hidden state, factors,
+      inferred input (ii) sample, inferred bias, ii mean, ii log var,
+      log rate)
   """
   key, xenc = key_n_xenc
-  c, ii, g, f = state
+  c, ii, ib, g, f = state
   state_and_returns = lfads_decode_one_step(params, lfads_hps, key, keep_rate,
-                                            c, ii, f, g, xenc)
-  c, g, f, ii, ii_mean, ii_logvar, lograte = state_and_returns
-  state = (c, ii, g, f)
+                                            c, ii, ib, f, g, xenc)
+  c, g, f, ii, ib, ii_mean, ii_logvar, lograte = state_and_returns
+  state = (c, ii, ib, g, f)
   return state, state_and_returns
 
 
@@ -447,21 +481,24 @@ def lfads_decode_prior_one_step_scan(params, lfads_hps, state, key_n_ii):
       generator hidden state, factors, inferred input (ii) sample, log rate))
   """
   key, ii = key_n_ii
-  _, g, f = state
+  _, ib, g, f = state
   state_and_returns = lfads_decode_prior_one_step(params, lfads_hps, key,
-                                                  ii, f, g)
-  g, f, ii, lograte = state_and_returns
-  state = (ii, g, f)
+                                                  ii, ib, f, g)
+  g, f, ii, ib, lograte = state_and_returns
+  state = (ii, ib, g, f)
   return state, state_and_returns
 
 
-def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
+def lfads_decode(params, lfads_hps, key, ib_mean, ib_logvar, ic_mean, ic_logvar,
+                 xenc_t, keep_rate):
   """Run the LFADS network from latent variables to log rates.
 
   Arguments:
     params: a dictionary of LFADS parameters
     lfads_hps: a dictionary of LFADS hyperparameters
     key: random.PRNGKey for random bits
+    ib_mean: np array of generator bias mean
+    ib_logvar: np array of generator bias log variance
     ic_mean: np array of generator initial condition mean
     ic_logvar: np array of generator initial condition log variance
     xenc_t: np array bidirectional encoding of input (x_t) with leading dim
@@ -469,57 +506,70 @@ def lfads_decode(params, lfads_hps, key, ic_mean, ic_logvar, xenc_t, keep_rate):
     keep_rate: dropout keep rate
 
   Returns:
-    7-tuple of np arrays all with leading dim being time,
-      controller hidden state, inferred input mean, inferred input log var,
-      generator hidden state, factors and log rates
+    8-tuple of np arrays all with leading dim being time,
+      (controller state, generator state, factors, inferred input, 
+       inferred bias, inferred input mean, inferred input log var,
+       log rates)
   """
 
-  keys = random.split(key, 2)
+  keys = random.split(key, 3)
 
   # Since the factors feed back to the controller,
   #    factors_{t-1} -> controller_t -> sample_t -> generator_t -> factors_t
   # is really one big loop and therefor one RNN.
   ii0 = params['ii0']
+  ii0 = np.where(lfads_hps['do_tanh_latents'], np.tanh(ii0), ii0)
+  # ii_t tanh'd at sampling time in the decode loop.  
   c0 = params['con']['h0']
-  g0 = np.tanh(diag_gaussian_sample(keys[0], ic_mean, ic_logvar,
-                                    lfads_hps['var_min']))
-  f0 = params['f0'] # np.zeros((lfads_hps['factors_dim'],))
+  ib = dists.diag_gaussian_sample(keys[0], ib_mean, ib_logvar,
+                                  lfads_hps['var_min'])
+  ib = np.where(lfads_hps['do_tanh_latents'], np.tanh(ib), ib)  
+  g0 = dists.diag_gaussian_sample(keys[1], ic_mean, ic_logvar,
+                                  lfads_hps['var_min'])
+  g0 = np.where(lfads_hps['do_tanh_latents'], np.tanh(g0), g0)
+  f0 = params['f0']
 
   # Make all the randomness for all T steps at once, it's more efficient.
   # The random keys get passed into scan along with the input, so the input
   # becomes of a 2-tuple (keys, actual input).
   T = xenc_t.shape[0]
-  keys_t = random.split(keys[1], T)
+  keys_t = random.split(keys[2], T)
 
-  state0 = (c0, ii0, g0, f0)
+  state0 = (c0, ii0, ib, g0, f0)
   decoder = partial(lfads_decode_one_step_scan, *(params, lfads_hps, keep_rate))
   _, state_and_returns_t = lax.scan(decoder, state0, (keys_t, xenc_t))
   return state_and_returns_t
 
 
 
-def compose_sample(lfads_hps, ic_j, ii_txi):
+def compose_sample(lfads_hps, ib_k, ic_j, ii_txi):
   """Compose latent code from initial condition and inferred input."""
   ii_ti = np.reshape(ii_txi, (-1,))
-  return np.concatenate([ic_j, ii_ti], axis=0)
+  return np.concatenate([ib_k, ic_j, ii_ti], axis=0)
 
 
-batch_compose_sample = vmap(compose_sample, in_axes=(None, 0, 0))
+batch_compose_sample = vmap(compose_sample, in_axes=(None, 0, 0, 0))
 
 
 def decompose_sample(lfads_hps, z):
   """Break apart the latent code into initial condition and inferred input."""
+  ib_dim = lfads_hps['ib_dim']
   ic_dim = lfads_hps['enc_dim']
-  ic_j, ii_ti = np.split(z, (ic_dim,), axis=0)
+  ib_k = z[:ib_dim]
+  ic_j = z[ib_dim:(ib_dim+ic_dim)]
+  ii_ti = z[(ib_dim+ic_dim):]
   ii_txi = np.reshape(ii_ti, (-1, lfads_hps['ii_dim']))
-  return ic_j, ii_txi
+  return ib_k, ic_j, ii_txi
 
 
 def batch_decompose_sample(lfads_hps, z_cxz):
+  ib_dim = lfads_hps['ib_dim']
   ic_dim = lfads_hps['enc_dim']
-  ic_cxj, ii_cxti = np.split(z_cxz, (ic_dim,), axis=1)
+  ib_cxk = z_cxz[:, :ib_dim]
+  ic_cxj = z_cxz[:, ib_dim:(ib_dim+ic_dim)]
+  ii_cxti = z_cxz[:, (ib_dim+ic_dim):]
   ii_cxtxi = np.reshape(ii_cxti, (ii_cxti.shape[0], -1, lfads_hps['ii_dim']))
-  return ic_cxj, ii_cxtxi
+  return ib_cxk, ic_cxj, ii_cxtxi
 
 
 def lfads_decode_prior(params, lfads_hps, key, z_sample):
@@ -532,18 +582,22 @@ def lfads_decode_prior(params, lfads_hps, key, z_sample):
     z_sample: sample of the latents a numpy array composed of initial condition
       and inferred inputs
   Returns:
-    4-tuple of np arrays all with leading dim being time,
-      (generator hidden state, factors, inferred input, and log rates)
+    7-tuple of np arrays all with leading dim being time,
+      (generator hidden state, factors, inferred input, inferred bias, log rates, 
+       generator initial condition and inferred input initial condition)
   """
 
-  g0, ii_txi = decompose_sample(lfads_hps, z_sample)
-  g0 = np.tanh(g0)
-  ii_txi = np.tanh(ii_txi)
+  ib, g0, ii_txi = decompose_sample(lfads_hps, z_sample)
+  ib = np.where(lfads_hps['do_tanh_latents'], np.tanh(ib), ib)  
+  g0 = np.where(lfads_hps['do_tanh_latents'], np.tanh(g0), g0)
+  ii0 = params['ii0']
+  ii0 = np.where(lfads_hps['do_tanh_latents'], np.tanh(ii0), ii0)
+  # ii tanh'd at the decode loop to keep prior routines similar to inference.
+
   # Since the factors feed back to the controller,
   #    factors_{t-1} -> controller_t -> sample_t -> generator_t -> factors_t
   # is really one big loop and therefor one RNN.
-  ii0 = params['ii0']
-  f0 = params['f0'] # np.zeros((lfads_hps['factors_dim'],))
+  f0 = params['f0'] 
 
   # Make all the randomness for all T steps at once, it's more efficient.
   # The random keys get passed into scan along with the input, so the input
@@ -552,10 +606,12 @@ def lfads_decode_prior(params, lfads_hps, key, z_sample):
   keys = random.split(key, 2)
   keys_t = random.split(keys[0], T)
 
-  state0 = (ii0, g0, f0)
+  state0 = (ii0, ib, g0, f0)
   decoder = partial(lfads_decode_prior_one_step_scan, *(params, lfads_hps))
   _, state_and_returns_t = lax.scan(decoder, state0, (keys_t, ii_txi))
-  return state_and_returns_t
+
+  g_t, f_t, ii_t, ib, lograte_t = state_and_returns_t
+  return (g_t, f_t, ii_t, ib, lograte_t, g0, ii0)
 
 
 def lfads(params, lfads_hps, key, x_t, keep_rate):
@@ -574,16 +630,19 @@ def lfads(params, lfads_hps, key, x_t, keep_rate):
 
   keys = random.split(key, num=2)
 
-  ic_mean, ic_logvar, xenc_t = \
+  ib_mean, ib_logvar, ic_mean, ic_logvar, xenc_t = \
       lfads_encode(params, lfads_hps, keys[0], x_t, keep_rate)
 
-  c_t, gen_t, factor_t, ii_t, ii_mean_t, ii_logvar_t, lograte_t = \
-      lfads_decode(params, lfads_hps, keys[1], ic_mean, ic_logvar,
+  c_t, gen_t, factor_t, ii_t, ib_t, ii_mean_t, ii_logvar_t, lograte_t = \
+      lfads_decode(params, lfads_hps, keys[1],
+                   ib_mean, ib_logvar, ic_mean, ic_logvar,
                    xenc_t, keep_rate)
 
   # As this is tutorial code, we're passing everything around.
-  return {'xenc_t' : xenc_t, 'ic_mean' : ic_mean, 'ic_logvar' : ic_logvar,
-          'ii_t' : ii_t, 'c_t' : c_t, 'ii_mean_t' : ii_mean_t,
+  return {'xenc_t' : xenc_t,
+          'ib_mean' : ib_mean, 'ib_logvar' : ib_logvar,          
+          'ic_mean' : ic_mean, 'ic_logvar' : ic_logvar,
+          'ib_t' : ib_t, 'ii_t' : ii_t, 'c_t' : c_t, 'ii_mean_t' : ii_mean_t,
           'ii_logvar_t' : ii_logvar_t, 'gen_t' : gen_t, 'factor_t' : factor_t,
           'lograte_t' : lograte_t}
 
@@ -602,14 +661,15 @@ def lfads_prior_sample(params, lfads_hps, key):
     samples from latents and then runs only the generative model.
   """
   keys = random.split(key, num=2)
-  z_sample = gmm_sample(keys[0], params['gmm_resp'], params['gmm_mean'],
-                        params['gmm_logvar'], 1e-16)
+  z_sample = dists.gmm_sample(keys[0], params['gmm']['resp'],
+                              params['gmm']['mean'],
+                              params['gmm']['logvar'], 1e-16)
 
-  gen_t, factor_t, ii_t, lograte_t = \
+  gen_t, factor_t, ii_t, ib_t, lograte_t, g0, ii0 = \
       lfads_decode_prior(params, lfads_hps, keys[1], z_sample)
 
-  return {'ii_t' : ii_t, 'gen_t' : gen_t, 'factor_t' : factor_t,
-          'lograte_t' : lograte_t}
+  return {'ii_t' : ii_t, 'ib_t' : ib_t, 'gen_t' : gen_t, 'factor_t' : factor_t,
+          'lograte_t' : lograte_t, 'g0' : g0, 'ii0' : ii0}
 
 
 lfads_encode_jit = jit(lfads_encode)
@@ -649,33 +709,35 @@ def lfads_losses(params, lfads_hps, key, x_bxt, kl_scale, keep_rate):
   keys_b = random.split(keys[0], B)
   lfads = batch_lfads(params, lfads_hps, keys_b, x_bxt, keep_rate)
 
-  post_mean_bxz = batch_compose_sample(lfads_hps, lfads['ic_mean'],
-                                       lfads['ii_mean_t'])
-  post_logvar_bxz = batch_compose_sample(lfads_hps, lfads['ic_logvar'],
-                                         lfads['ii_logvar_t'])
+  post_mean_bxz = batch_compose_sample(lfads_hps, lfads['ib_mean'],
+                                       lfads['ic_mean'], lfads['ii_mean_t'])
+  post_logvar_bxz = batch_compose_sample(lfads_hps, lfads['ib_logvar'],
+                                         lfads['ic_logvar'], lfads['ii_logvar_t'])
 
   # Sum over time and state dims, average over batch.
   # KL - g0
   # keys are per-batch example, not number of prior examples
   keys_bxsx2 = np.reshape(random.split(keys[1], B * S), (B, S, 2))
   kl_loss_b = \
-      batch_kl_sample_gmm_pmap(keys_bxsx2, post_mean_bxz, post_logvar_bxz,
-                               params['gmm_resp'], params['gmm_mean'],
-                               params['gmm_logvar'], lfads_hps['var_min'])
+      dists.batch_kl_sample_gmm(keys_bxsx2, post_mean_bxz, post_logvar_bxz,
+                                params['gmm']['resp'], params['gmm']['mean'],
+                                params['gmm']['logvar'], lfads_hps['var_min'])
 
   kl_loss_prescale = np.mean(kl_loss_b)#, axis=0)  # IndexError: cannot do a non-empty take from an empty axes.
   kl_loss = kl_scale * kl_loss_prescale
 
   # Log-likelihood of data given latents.
-  log_p_xgz = np.sum(poisson_log_likelihood(x_bxt, lfads['lograte_t'])) / float(B)
+  log_p_xgz = np.sum(dists.poisson_log_likelihood(x_bxt, lfads['lograte_t'])) / float(B)
 
   # Implements the idea that inputs to the generator should be minimal, in the
   # sense of attempting to interpret the inferred inputs as actual inputs to a
   # recurrent system, under an assumption of minimal intervention to that
   # system. If all we want to do is keep the mean the at at zero, that's a
   # different loss
-  _, ii_prior_mean_cxtxi = batch_decompose_sample(lfads_hps, params['gmm_mean'])
-  ii_l2_loss = lfads_hps['ii_l2_reg'] * np.sum(ii_prior_mean_cxtxi**2) / float(C)
+  _, _, ii_post_mean_bxtxi = batch_decompose_sample(lfads_hps, post_mean_bxz)  
+  _, _, ii_prior_mean_cxtxi = batch_decompose_sample(lfads_hps, params['gmm']['mean'])
+  ii_l2_loss = lfads_hps['ii_l2_reg'] * (np.sum(ii_prior_mean_cxtxi**2) / float(C) +
+                                         np.sum(ii_post_mean_bxtxi**2) / float(B))
 
   # L2
   l2reg = lfads_hps['l2reg']
@@ -726,7 +788,7 @@ def posterior_sample_and_average(params, lfads_hps, key, x_txd):
   x_bxtxd = np.repeat(np.expand_dims(x_txd, axis=0), batch_size, axis=0)
   keep_rate = 1.0
   lfads_dict = batch_lfads(params, lfads_hps, keys, x_bxtxd, keep_rate)
-  return average_lfads_batch(lfads_dict)
+  return utils.average_lfads_batch(lfads_dict)
 
 
 def posterior_sample(params, lfads_hps, key, x_txd):

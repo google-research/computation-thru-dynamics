@@ -53,17 +53,28 @@ def plot_data_example(input_bxtxu, hidden_bxtxn=None,
   ntoplot = 10
   ntimesteps = input_bxtxu.shape[1]
   f = plt.figure(figsize=(10,8))
-  plt.subplot(311)
-  plt.plot(input_bxtxu[bidx,:,0])
+  plt.subplot(221)
+  plt.plot(input_bxtxu[bidx,:,0], 'b')
+  plt.plot(input_bxtxu[bidx,:,2], 'k')
+  plt.plot([0, ntimesteps], [0, 0], color=[0.0, 0.0, 0.0, 0.1])
   plt.xlim([0, ntimesteps-1])
   plt.ylabel('Input')
   plt.title('Example %d'%bidx)
+  plt.subplot(222)
+  plt.plot(input_bxtxu[bidx,:,1], 'b')
+  plt.plot(input_bxtxu[bidx,:,3], 'k')
+  plt.plot([0, ntimesteps], [0, 0], color=[0.0, 0.0, 0.0, 0.1])  
+  plt.xlim([0, ntimesteps-1])
+  plt.ylabel('Input')
+  plt.title('Example %d'%bidx)
+  
   if hidden_bxtxn is not None:
-    plt.subplot(312)
+    plt.subplot(223)
     plt.plot(hidden_bxtxn[bidx, :, 0:ntoplot] + 0.25*onp.arange(0, ntoplot, 1), 'b')
     plt.ylabel('Hiddens')
     plt.xlim([0, ntimesteps-1]);
-  plt.subplot(414)
+    plt.xlabel('Time')
+  plt.subplot(224)
   if output_bxtxo is not None:
     plt.plot(output_bxtxo[bidx,:,0].T, 'r');
     plt.xlim([0, ntimesteps-1]);
@@ -75,7 +86,7 @@ def plot_data_example(input_bxtxu, hidden_bxtxn=None,
   return f
 
 
-def plot_data_stats(data_dict, data_bxtxn, data_dt):
+def plot_data_stats(data_dict, data_bxtxn, data_dt, bidx=0):
   """Plot the statistics of the data integrator RNN data after spikifying."""
   print(onp.mean(onp.sum(data_bxtxn, axis=1)), "spikes/second")
   f = plt.figure(figsize=(12,4))
@@ -83,12 +94,12 @@ def plot_data_stats(data_dict, data_bxtxn, data_dt):
   plt.hist(onp.mean(data_bxtxn, axis=1).ravel()/data_dt);
   plt.xlabel('spikes / sec')
   plt.subplot(142)
-  plt.imshow(data_dict['hiddens'][0,:,:].T)
+  plt.imshow(data_dict['hiddens'][bidx,:,:].T)
   plt.xlabel('time')
   plt.ylabel('neuron #')
   plt.title('Sample trial rates')
   plt.subplot(143);
-  plt.imshow(data_bxtxn[0,:,:].T)
+  plt.imshow(data_bxtxn[bidx,:,:].T)
   plt.xlabel('time')
   plt.ylabel('neuron #')
   plt.title('spikes')
@@ -140,7 +151,104 @@ def remove_outliers(A, nstds=3):
   return onp.where(A_show > A_mean + clip, A_mean + clip, A_show)
 
 
-def plot_lfads(x_txd, avg_lfads_dict, figsize=(16,16), nstds=3):
+
+def plot_lfads(x_txd, lfads_dict, data_dict=None, dd_bidx=None,
+               renorm_fun=None):
+  """Plot the full state of LFADS operating on a single example."""
+  print("bidx: ", dd_bidx)
+  ld = lfads_dict
+
+  def remove_outliers(A, nstds=3):
+    clip = nstds * onp.std(A)
+    A_mean = onp.mean(A)
+    A_show = onp.where(A < A_mean - clip, A_mean - clip, A)
+    return onp.where(A_show > A_mean + clip, A_mean + clip, A_show)
+    
+  f = plt.figure(figsize=(12,20))
+  if x_txd is not None:         # for plotting prior samples
+    plt.subplot(621)
+    plt.imshow(x_txd)
+    plt.title('x')
+
+  if 'xenc_t' in ld.keys():
+    plt.subplot(622)
+    x_enc = remove_outliers(ld['xenc_t'])
+    plt.imshow(x_enc)
+    plt.title('x enc')
+
+  plt.subplot(623)
+  gen = remove_outliers(ld['gen_t'])
+  plt.imshow(gen)
+  plt.title('generator')
+
+  plt.subplot(624)
+  factors = remove_outliers(ld['factor_t'])
+  plt.imshow(factors)
+  plt.title('factors')
+
+  plt.subplot(625)
+  rates = remove_outliers(onp.exp(ld['lograte_t']))
+  plt.imshow(rates)
+  plt.title('rates')    
+
+  if data_dict is not None:
+    true_rates = renorm_fun(data_dict['hiddens'][dd_bidx])
+    plt.subplot(626)
+    plt.imshow(true_rates)
+    plt.title('True rates')
+
+  plt.subplot(627)        
+  if 'ic_mean' in ld.keys():
+    ic = ld['ic_mean']
+  else:
+    ic = ld['g0']
+  plt.stem(ic)
+  plt.title('g0 mean')
+    
+
+  if 'c_t' in ld.keys():
+    plt.subplot(628)    
+    con = remove_outliers(ld['c_t'])
+    plt.imshow(con)
+    plt.title('controller')
+
+  plt.subplot(629)
+  if 'ii_mean_t' in ld.keys():
+    ii = ld['ii_mean_t']
+  else:
+    ii = ld['ii_t']
+  ntime = ii.shape[0]
+  scaler = 1*onp.expand_dims(onp.arange(ii.shape[1]), axis=0)  
+  plt.plot(ii + scaler, 'b')
+  plt.title('Inferred inputs')
+ 
+  if data_dict is not None:
+    plt.subplot(6,2,10)
+    ninputs = data_dict['inputs'].shape[2]      
+    scaler = onp.expand_dims(onp.arange(ninputs), axis=0)    
+    plt.plot(data_dict['inputs'][dd_bidx] + scaler, 'c')
+    plt.title('Inputs to data RNN')
+
+  plt.subplot(6,2,11)
+  plt.plot(ld['ib_t'], 'k')
+  plt.title('Inferred bias')
+  
+  plt.subplot(6,2,12)
+  ntoplot=8
+  a = 0.25
+  plt.plot(rates[:, :ntoplot] + a*onp.arange(0, ntoplot, 1), 'b')
+  if data_dict is not None:
+    plt.plot(true_rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'r')
+    plt.title('LFADS rates (blue), True rates (red)')
+  else:
+    plt.title('LFADS rates (blue)')
+  plt.xlabel('timesteps')
+  
+  return f
+
+
+
+def plot_lfads_new(x_txd, avg_lfads_dict, figsize=(16,16), nstds=3):
   """Plot the full state ofLFADS operating on a single example."""
   ld = avg_lfads_dict
 
