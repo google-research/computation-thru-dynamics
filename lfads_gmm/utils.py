@@ -102,20 +102,6 @@ def average_lfads_batch(lfads_dict):
   return avg_dict
 
 
-def keygen(key, nkeys):
-  """Generate randomness that JAX can use by splitting the JAX keys.
-
-  Args:
-    key : the random.PRNGKey for JAX
-    nkeys : how many keys in key generator
-
-  Returns:
-    2-tuple (new key for further generators, key generator)
-  """
-  keys = random.split(key, nkeys+1)
-  return keys[0], (k for k in keys[1:])
-
-
 def ensure_dir(file_path):
   """Make sure the directory exists, create if it does not."""
   directory = os.path.dirname(file_path)

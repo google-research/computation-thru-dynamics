@@ -152,18 +152,11 @@ def remove_outliers(A, nstds=3):
 
 
 
-def plot_lfads(x_txd, lfads_dict, data_dict=None, dd_bidx=None,
-               renorm_fun=None):
+def plot_lfads(x_txd, lfads_dict, data_dict=None, dd_bidx=None, renorm_fun=None):
   """Plot the full state of LFADS operating on a single example."""
   print("bidx: ", dd_bidx)
   ld = lfads_dict
 
-  def remove_outliers(A, nstds=3):
-    clip = nstds * onp.std(A)
-    A_mean = onp.mean(A)
-    A_show = onp.where(A < A_mean - clip, A_mean - clip, A)
-    return onp.where(A_show > A_mean + clip, A_mean + clip, A_show)
-    
   f = plt.figure(figsize=(12,20))
   if x_txd is not None:         # for plotting prior samples
     plt.subplot(621)
@@ -197,14 +190,15 @@ def plot_lfads(x_txd, lfads_dict, data_dict=None, dd_bidx=None,
     plt.imshow(true_rates)
     plt.title('True rates')
 
-  plt.subplot(627)        
-  if 'ic_mean' in ld.keys():
-    ic = ld['ic_mean']
-  else:
-    ic = ld['g0']
-  plt.stem(ic)
-  plt.title('g0 mean')
-    
+  plt.subplot(627)
+  ic_pmean = ld['ic_post_mean']
+  ic_pstd = onp.sqrt(onp.exp(ld['ic_post_logvar']))
+  plt.plot(ic_pmean, 'k')
+  plt.plot(ic_pmean+ic_pstd, 'r')
+  plt.plot(ic_pmean-ic_pstd, 'r')    
+  plt.stem(ld['g0'])  
+  plt.title('g0')
+  plt.axis('tight')
 
   if 'c_t' in ld.keys():
     plt.subplot(628)    
@@ -213,12 +207,14 @@ def plot_lfads(x_txd, lfads_dict, data_dict=None, dd_bidx=None,
     plt.title('controller')
 
   plt.subplot(629)
-  if 'ii_mean_t' in ld.keys():
-    ii = ld['ii_mean_t']
-  else:
-    ii = ld['ii_t']
+  ii_pmean = ld['ii_post_mean_t']
+  ii_pstd = onp.sqrt(onp.exp(ld['ii_post_logvar_t']))
+  ii = ld['ii_t']
   ntime = ii.shape[0]
-  scaler = 1*onp.expand_dims(onp.arange(ii.shape[1]), axis=0)  
+  scaler = 1*onp.expand_dims(onp.arange(ii.shape[1]), axis=0)
+  plt.plot(ii_pmean + scaler, 'k')
+  plt.plot(ii_pmean + ii_pstd + scaler, 'r')
+  plt.plot(ii_pmean - ii_pstd + scaler, 'r')  
   plt.plot(ii + scaler, 'b')
   plt.title('Inferred inputs')
  
@@ -247,66 +243,56 @@ def plot_lfads(x_txd, lfads_dict, data_dict=None, dd_bidx=None,
   return f
 
 
+def plot_lfads_from_prior(lfads_dict):
+  """Plot the full state of LFADS operating on a single example 
+  generated from a prior sample."""
+  ld = lfads_dict
 
-def plot_lfads_new(x_txd, avg_lfads_dict, figsize=(16,16), nstds=3):
-  """Plot the full state ofLFADS operating on a single example."""
-  ld = avg_lfads_dict
+  f = plt.figure(figsize=(12,10))
 
-  def remove_outliers(A, nstds=3):
-    clip = nstds * onp.std(A)
-    A_mean = onp.mean(A)
-    A_show = onp.where(A < A_mean - clip, A_mean - clip, A)
-    return onp.where(A_show > A_mean + clip, A_mean + clip, A_show)
-
-  f = plt.figure(figsize=figsize)
-
-  plt.subplot(361)
-  x_enc = remove_outliers(ld['xenc_t'], nstds)
-  plt.imshow(x_enc.T)
-  plt.title('x enc')
-
-  plt.subplot(362)
-  gen = remove_outliers(ld['gen_t'], nstds)
-  plt.imshow(gen.T)
+  plt.subplot(421)
+  gen = remove_outliers(ld['gen_t'])
+  plt.imshow(gen)
   plt.title('generator')
 
-  plt.subplot(363)
-  factors = remove_outliers(ld['factor_t'], nstds)
-  plt.imshow(factors.T)
+  plt.subplot(422)
+  factors = remove_outliers(ld['factor_t'])
+  plt.imshow(factors)
   plt.title('factors')
 
-  plt.subplot(364)
-  rates = remove_outliers(onp.exp(ld['lograte_t']), nstds)
-  plt.imshow(rates.T)
-  plt.title('rates')
+  plt.subplot(423)
+  rates = remove_outliers(onp.exp(ld['lograte_t']))
+  plt.imshow(rates)
+  plt.title('rates')    
 
-  plt.subplot(365)
-  data = remove_outliers(x_txd, nstds)
-  plt.imshow(data.T)
-  plt.title('x')
 
-  plt.subplot(334)
-  ic_mean = ld['ic_mean']
-  ic_std = onp.exp(0.5*ld['ic_logvar'])
-  plt.stem(ic_mean)
-  plt.title('g0 mean')
+  plt.subplot(424)
+  plt.stem(ld['g0'])  
+  plt.title('g0')
+  plt.axis('tight')
 
-  plt.subplot(335)
-  con = remove_outliers(ld['c_t'], nstds)
-  plt.imshow(con.T)
-  plt.title('controller')
+  if 'c_t' in ld.keys():
+    plt.subplot(425)    
+    con = remove_outliers(ld['c_t'])
+    plt.imshow(con)
+    plt.title('controller')
 
-  plt.subplot(336)
-  ii_mean = ld['ii_mean_t']
-  plt.plot(ii_mean + onp.expand_dims(onp.arange(ii_mean.shape[1]), axis=0), 'b')
-  plt.title('inferred input mean')
-  plt.legend(('LFADS inferred input', 'rescaled true input to integrator RNN'))
-
-  plt.subplot(313)
+  plt.subplot(426)
+  ii = ld['ii_t']
+  ntime = ii.shape[0]
+  scaler = 1*onp.expand_dims(onp.arange(ii.shape[1]), axis=0)
+  plt.plot(ii + scaler, 'b')
+  plt.title('Inferred inputs')
+ 
+  plt.subplot(4,2,7)
+  plt.plot(ld['ib_t'], 'k')
+  plt.title('Inferred bias')
+  
+  plt.subplot(4,2,8)
   ntoplot=8
   a = 0.25
-  plt.plot(rates[:, 0:ntoplot] + a*onp.arange(0, ntoplot, 1), 'b')
-  plt.title('LFADS rates (blue), True rates (red)')
+  plt.plot(rates[:, :ntoplot] + a*onp.arange(0, ntoplot, 1), 'b')
+  plt.title('LFADS rates (blue)')
   plt.xlabel('timesteps')
-
+  
   return f

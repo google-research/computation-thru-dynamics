@@ -110,26 +110,23 @@ def diag_multidim_gaussian_log_likelihood(z_u, mean_u, logvar_u, varmin):
   return np.sum(diag_gaussian_log_likelihood(z_u, mean_u, logvar_u, varmin), axis=0)
 
 
-def kl_gauss_gauss(z_mean, z_logvar, prior_z_mean, prior_z_logvar,
-                   varmin=1e-16):
+def kl_gauss_gauss(q_mean, q_logvar, p_mean, p_logvar, varmin=1e-16):
   """Compute the KL divergence between two diagonal Gaussian distributions.
             KL(q||p) = E_q[log q(z) - log p(z))]
    Args:
-    z_mean: mean of posterior, z ~ q(z|x)
-    z_logvar: logvar of posterior
-    prior_z_mean: mean of prior, z ~ p(z)
-    prior_z_logvar: logvar of prior
+    q_mean: mean of q
+    q_logvar: logvar of q
+    p_mean: mean of p
+    p_logvar: logvar of p
     varmin: minimum variance allowed, useful for numerical stability
 
     Returns:
-      np array of KL, computed analytically, same size as z_mean
+      np array of KL, computed analytically, same size as q_mean
   """
-  z_logvar_wm = np.log(np.exp(z_logvar) + varmin)
-  prior_z_logvar_wm = np.log(np.exp(prior_z_logvar) + varmin)
-  return (0.5 * (prior_z_logvar_wm - z_logvar_wm
-                 + np.exp(z_logvar_wm - prior_z_logvar_wm)
-                 + np.square((z_mean - prior_z_mean) / np.exp(0.5 * prior_z_logvar_wm))
-                 - 1.0))
+  q_logvar = np.log(np.exp(q_logvar) + varmin)
+  p_logvar = np.log(np.exp(p_logvar) + varmin)
+  return (0.5 * (p_logvar - q_logvar + np.exp(q_logvar - p_logvar)
+                 + np.square((q_mean - p_mean) / np.exp(0.5 * p_logvar)) - 1.0))
 
 
 batch_kl_gauss_gauss = vmap(kl_gauss_gauss, in_axes=(0, 0, 1, 1, None))
@@ -138,8 +135,8 @@ batch_kl_gauss_gauss = vmap(kl_gauss_gauss, in_axes=(0, 0, 1, 1, None))
 gmm_diag_gaussian_log_likelihood = vmap(diag_gaussian_log_likelihood, (None, 0, 0, None))
 
 
-def kl_sample_gmm(key, z_mean_u, z_logvar_u,
-                  resps_c, prior_z_mean_cxu, prior_z_logvar_cxu, varmin):
+def kl_sample_gmm(key, q_mean_u, q_logvar_u,
+                  gmm_resps_c, gmm_p_mean_cxu, gmm_p_logvar_cxu, varmin):
   """Sample the KL divergence between a gaussian and mixture of gaussians.
             KL(q||p) = E_q[log q(z) - log p(z))]
 
@@ -150,12 +147,12 @@ def kl_sample_gmm(key, z_mean_u, z_logvar_u,
 
   Arguments:
     key: random.PRNGKey for random bits
-    z_mean_u: mean from posterior gaussian distribution with dim u
-    z_logvar_u: log variance from posterior gaussian distribution with dim u
-    resps_c: np.array with shape c, responsibilities in the GMM, \pi in
-      the above formula is softmax(resps_c).
-    means_c: np.array with shape c, means in GMM
-    logvar_c: np.array with shape c, log variances in GMM
+    q_mean_u: mean from posterior gaussian distribution with dim u
+    q_logvar_u: log variance from posterior gaussian distribution with dim u
+    gmm_resps_c: np.array with shape c, responsibilities in the GMM, \pi in
+      the above formula is softmax(gmm_resps_c).
+    gmm_p_mean_cxu: np.array 2D array with shape mixture by dist dim, means in GMM
+    gmm_p_logvar_cxu: "", log variances in GMM
     varmin: Minimum variance allowed (numerially useful).
 
   Returns:
@@ -163,9 +160,9 @@ def kl_sample_gmm(key, z_mean_u, z_logvar_u,
   """
 
   # Handle case of one gaussian in the mixture with closed form equations.
-  if resps_c.shape[0] == 1:
-    return kl_gauss_gauss(z_mean_u, z_logvar_u,
-                          prior_z_mean_cxu[0,:], prior_z_logvar[0,:], varmin)
+  if gmm_resps_c.shape[0] == 1:
+    return kl_gauss_gauss(q_mean_u, q_logvar_u,
+                          gmm_p_mean_cxu[0,:], gmm_p_logvar[0,:], varmin)
 
   # Otherwise sample the KL
   ll = diag_gaussian_log_likelihood
@@ -173,12 +170,12 @@ def kl_sample_gmm(key, z_mean_u, z_logvar_u,
   sample = diag_gaussian_sample
   keys = random.split(key, 2)
 
-  z_u = sample(keys[0], z_mean_u, z_logvar_u, varmin)
-  logq_u = ll(z_u, z_mean_u, z_logvar_u, varmin) # over multigauss dim
+  z_u = sample(keys[0], q_mean_u, q_logvar_u, varmin)
+  logq_u = ll(z_u, q_mean_u, q_logvar_u, varmin) # over multigauss dim
 
   assert varmin <= 1e-15, "Very small or you need to know what you are doing."
-  llp_each_gaussian_cxu = gmm_ll(z_u, prior_z_mean_cxu, prior_z_logvar_cxu, varmin)
-  log_normed_resps_cx1 = np.expand_dims(log_softmax(resps_c), axis=1)
+  llp_each_gaussian_cxu = gmm_ll(z_u, gmm_p_mean_cxu, gmm_p_logvar_cxu, varmin)
+  log_normed_resps_cx1 = np.expand_dims(log_softmax(gmm_resps_c), axis=1)
   logp_u = logsumexp(llp_each_gaussian_cxu + log_normed_resps_cx1, axis=0)
 
   kl_estimate = np.sum(logq_u - logp_u, axis=0)
@@ -188,8 +185,8 @@ def kl_sample_gmm(key, z_mean_u, z_logvar_u,
 batch_samples_kl_sample_gmm = vmap(kl_sample_gmm, in_axes=(0, None, None, None, None, None, None))
 
 
-def kl_samples_gmm(keys_sx2, z_mean_u, z_logvar_u, resps_c,
-                   prior_z_mean_cxu, prior_z_logvar_cxu, varmin):
+def kl_samples_gmm(keys_sx2, q_mean_u, q_logvar_u, gmm_resps_c,
+                   gmm_p_mean_cxu, gmm_p_logvar_cxu, varmin):
   """Sample KL between gaussian and gaussian mixture many times and average.
 
   See comments for kl_sample_gmm for full explanation.
@@ -201,8 +198,8 @@ def kl_samples_gmm(keys_sx2, z_mean_u, z_logvar_u, resps_c,
     KL averaged over S samples.
   """
   sample_kl = batch_samples_kl_sample_gmm
-  kl_samples = sample_kl(keys_sx2, z_mean_u, z_logvar_u, resps_c,
-                         prior_z_mean_cxu, prior_z_logvar_cxu, varmin)
+  kl_samples = sample_kl(keys_sx2, q_mean_u, q_logvar_u,
+                         gmm_resps_c, gmm_p_mean_cxu, gmm_p_logvar_cxu, varmin)
   kl = np.mean(kl_samples)
   return kl
 
@@ -213,12 +210,12 @@ batch_kl_sample_gmm = vmap(kl_samples_gmm, in_axes=(0, 0, 0, None, None, None, N
 batch_kl_sample_gmm_jit = jit(batch_kl_sample_gmm)
 
 
-##
-## The following functions using pmap are prototypes and not yet used.
+## TODO
+## The following functions using pmap are prototypes and are not yet used.
 ##
 def batch_kl_sample_gmm_pmap_pre(keys_8xbd8xsx2, z_mean_8xbd8xu,
-                                 z_logvar_8xbd8xu, resps_c, prior_z_mean_cxu,
-                                 prior_z_logvar_cxu, varmin):
+                                 z_logvar_8xbd8xu, resps_c, gmm_z_mean_cxu,
+                                 gmm_z_logvar_cxu, varmin):
   """Sample KL between gaussian and mixture of gaussians many times using pmap.
 
   See comments for kl_sample_gmm for full explanation.
@@ -237,13 +234,13 @@ def batch_kl_sample_gmm_pmap_pre(keys_8xbd8xsx2, z_mean_8xbd8xu,
 
   # This fun gets around jax complaining about vmap not having these parameters.
   def batch_kl_sample_gmm2(keys, z_mean, z_logvar, resps,
-                           prior_z_mean, prior_z_logvar, varmin):
+                           gmm_z_mean, gmm_z_logvar, varmin):
     return batch_kl_sample_gmm(keys, z_mean, z_logvar, resps,
-                           prior_z_mean, prior_z_logvar, varmin)
+                           gmm_z_mean, gmm_z_logvar, varmin)
 
   kwargs = {'resps' : resps_c,
-            'prior_z_mean' : prior_z_mean_cxu,
-            'prior_z_logvar' : prior_z_logvar_cxu, 'varmin' : varmin}
+            'gmm_z_mean' : gmm_z_mean_cxu,
+            'gmm_z_logvar' : gmm_z_logvar_cxu, 'varmin' : varmin}
   batch_samples_kl_sample_pre_pmap = partial(batch_kl_sample_gmm2, **kwargs)
 
   pmap_samples = pmap(batch_samples_kl_sample_pre_pmap)
@@ -254,7 +251,7 @@ def batch_kl_sample_gmm_pmap_pre(keys_8xbd8xsx2, z_mean_8xbd8xu,
 
 
 def batch_kl_sample_gmm_pmap(keys_bxsx2, z_mean_bxu, z_logvar_bxu, resps_c,
-                             prior_z_mean_cxu, prior_z_logvar_cxu, varmin):
+                             gmm_z_mean_cxu, gmm_z_logvar_cxu, varmin):
 
   """Sample KL between gaussian and mixture of gaussians many times using pmap.
 
@@ -265,8 +262,8 @@ def batch_kl_sample_gmm_pmap(keys_bxsx2, z_mean_bxu, z_logvar_bxu, resps_c,
     z_mean_bxu: mean of gaussian, shape of batch x z dim
     z_logvar_bxu: logvar of gaussian, shape of batch x z dim
     resps_c : logits for responsibilities of GMM with c gaussians
-    prior_z_mean_cxu: means for GMM, with c gaussians, each with u dim
-    prior_z_logvar_cxu: log variances for GMM, with c gaussians, each with u dim
+    gmm_z_mean_cxu: means for GMM, with c gaussians, each with u dim
+    gmm_z_logvar_cxu: log variances for GMM, with c gaussians, each with u dim
     varmin: minimal variance
 
   Returns:
@@ -285,8 +282,8 @@ def batch_kl_sample_gmm_pmap(keys_bxsx2, z_mean_bxu, z_logvar_bxu, resps_c,
   z_logvar_8xbd8xu = pmap(lambda x: x)(z_logvar_8xbd8xu)
 
   return batch_kl_sample_gmm_pmap_pre(keys_8xbd8xsx2, z_mean_8xbd8xu, z_logvar_8xbd8xu,
-                                      resps_c, prior_z_mean_cxu,
-                                      prior_z_logvar_cxu, varmin)
+                                      resps_c, gmm_z_mean_cxu,
+                                      gmm_z_logvar_cxu, varmin)
 
 
 batch_kl_sample_gmm_pmap_jit = jit(batch_kl_sample_gmm_pmap)
