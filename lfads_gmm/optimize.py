@@ -204,7 +204,7 @@ def optimize_lfads(key, init_params, hps, opt_hps,
                     tlosses['l2'], tlosses['ii_l2'], tlosses['ii_mean']))
     print(s3.format(elosses['total'], elosses['nlog_p_xgz'],
                     elosses['kl_prescale'], elosses['kl'],
-                    elosses['l2'], elosses['ii_l2', tlosses['ii_mean']))
+                    elosses['l2'], elosses['ii_l2'], tlosses['ii_mean']))
     print(s4.format(rmin, rmean, rmax, rstd))
 
     tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
