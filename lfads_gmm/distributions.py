@@ -129,7 +129,7 @@ def kl_gauss_gauss(q_mean, q_logvar, p_mean, p_logvar, varmin=1e-16):
                  + np.square((q_mean - p_mean) / np.exp(0.5 * p_logvar)) - 1.0))
 
 
-batch_kl_gauss_gauss = vmap(kl_gauss_gauss, in_axes=(0, 0, 1, 1, None))
+batch_kl_gauss_gauss = vmap(kl_gauss_gauss, in_axes=(0, 0, None, None, None))
 
 
 gmm_diag_gaussian_log_likelihood = vmap(diag_gaussian_log_likelihood, (None, 0, 0, None))
@@ -161,8 +161,9 @@ def kl_sample_gmm(key, q_mean_u, q_logvar_u,
 
   # Handle case of one gaussian in the mixture with closed form equations.
   if gmm_resps_c.shape[0] == 1:
-    return kl_gauss_gauss(q_mean_u, q_logvar_u,
-                          gmm_p_mean_cxu[0,:], gmm_p_logvar[0,:], varmin)
+    return np.sum(kl_gauss_gauss(q_mean_u, q_logvar_u,
+                                 gmm_p_mean_cxu[0,:], gmm_p_logvar_cxu[0,:],
+                                 varmin))
 
   # Otherwise sample the KL
   ll = diag_gaussian_log_likelihood

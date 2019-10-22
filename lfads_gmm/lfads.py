@@ -745,9 +745,9 @@ def losses(params, hps, key, x_bxt, kl_scale, keep_rate):
                                          np.sum(ii_post_mean_bxtxi**2) / float(B))
 
   # Implements the idea that the average inferred input should be zero.
-  ii_mean_loss = (hps['ii_mean_reg'] *
-                  np.mean((ii_prior_mean_cxtxi - np.mean(ii_prior_mean_cxtxi, axis=1, keepdims=True))**2) + 
-                  np.mean((ii_post_mean_bxtxi - np.mean(ii_post_mean_bxtxi, axis=1, keepdims=True))**2))
+  ii_tavg_loss = (hps['ii_tavg_reg'] *
+                  (np.mean((ii_prior_mean_cxtxi - np.mean(ii_prior_mean_cxtxi, axis=1, keepdims=True))**2) +
+                   np.mean((ii_post_mean_bxtxi - np.mean(ii_post_mean_bxtxi, axis=1, keepdims=True))**2)))
 
   # L2 - TODO: exclusion method is not general to pytrees, i.e. nested dicts
   l2reg = hps['l2reg']
@@ -755,10 +755,10 @@ def losses(params, hps, key, x_bxt, kl_scale, keep_rate):
   l2_params = [p for k, p in params.items() if k not in l2_ignore]
   l2_loss = l2reg * optimizers.l2_norm(l2_params)**2
 
-  loss = -log_p_xgz + kl_loss + l2_loss + ii_l2_loss + ii_mean_loss
+  loss = -log_p_xgz + kl_loss + l2_loss + ii_l2_loss + ii_tavg_loss  
   all_losses = {'total' : loss, 'nlog_p_xgz' : -log_p_xgz,
                 'kl' : kl_loss, 'kl_prescale' : kl_loss_prescale,
-                'ii_l2' : ii_l2_loss, 'ii_mean' : ii_mean_loss, 'l2' : l2_loss}
+                'ii_l2' : ii_l2_loss, 'ii_tavg' : ii_tavg_loss, 'l2' : l2_loss}
 
   return all_losses
 
@@ -788,7 +788,7 @@ def sample_posterior_and_average(params, hps, key, x_txd, batch_size=None):
     hps: dict of LFADS hyperparameters
     key: JAX random state
     x_txd: 2d np.array time by dim trial to denoise
-    batch_size: samples to average over, if 0, use batch_size in hps
+    batch_size: number of samples, if none, use hps batch size
 
   Returns:
     LFADS dictionary of inferred values, averaged over randomness.
@@ -802,7 +802,7 @@ def sample_posterior_and_average(params, hps, key, x_txd, batch_size=None):
   return utils.average_lfads_batch(lfads_dict)
 
 
-def sample_posterior(params, hps, key, x_txd):
+def sample_posterior(params, hps, key, x_txd, batch_size=None):
   """Get the denoised lfads inferred values by posterior sample and average.
 
   Arguments:
@@ -810,29 +810,33 @@ def sample_posterior(params, hps, key, x_txd):
     hps: dict of LFADS hyperparameters
     key: JAX random state
     x_txd: 2d np.array time by dim trial to denoise
+    batch_size: number of samples, if none, use hps batch size
 
   Returns:
     LFADS dictionary of inferred values, averaged over randomness.
   """
-  batch_size = hps['batch_size']
+  if batch_size is None:
+    batch_size = hps['batch_size']
   keys = random.split(key, batch_size)
   x_bxtxd = np.repeat(np.expand_dims(x_txd, axis=0), batch_size, axis=0)
   keep_rate = 1.0
   return batch_forward_pass(params, hps, keys, x_bxtxd, keep_rate)
 
 
-def sample_prior(params, hps, key):
+def sample_prior(params, hps, key, batch_size=None):
   """Sample the LFADS generative process using random draws from the prior.
 
   Arguments: 
     params: dictionary of lfads parameters
     hps: dict of LFADS hyperparameters
     key: JAX random state
+    batch_size: number of samples, if none, use hps batch size
 
   Returns:
     LFADS dictionary of generated values.
   """
-  batch_size = hps['batch_size']
+  if batch_size is None:
+    batch_size = hps['batch_size']
   keys = random.split(key, batch_size)
   prior_dict = batch_forward_pass_prior(params, hps, keys)
 
@@ -859,5 +863,5 @@ batch_forward_pass_jit = jit(batch_forward_pass, static_argnums=(1,))
 losses_jit = jit(losses, static_argnums=(1,))
 training_loss_jit = jit(training_loss, static_argnums=(1,))
 sample_posterior_and_average_jit = jit(sample_posterior_and_average, static_argnums=(1,4))
-sample_posterior_jit = jit(sample_posterior, static_argnums=(1,))
-sample_prior_jit = jit(sample_prior, static_argnums=(1,))
+sample_posterior_jit = jit(sample_posterior, static_argnums=(1,4))
+sample_prior_jit = jit(sample_prior, static_argnums=(1,3))

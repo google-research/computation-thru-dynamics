@@ -201,10 +201,10 @@ def optimize_lfads(key, init_params, hps, opt_hps,
                    decay_fun(batch_pidx)))
     print(s2.format(tlosses['total'], tlosses['nlog_p_xgz'],
                     tlosses['kl_prescale'], tlosses['kl'],
-                    tlosses['l2'], tlosses['ii_l2'], tlosses['ii_mean']))
+                    tlosses['l2'], tlosses['ii_l2'], tlosses['ii_tavg']))
     print(s3.format(elosses['total'], elosses['nlog_p_xgz'],
                     elosses['kl_prescale'], elosses['kl'],
-                    elosses['l2'], elosses['ii_l2'], tlosses['ii_mean']))
+                    elosses['l2'], elosses['ii_l2'], elosses['ii_tavg']))
     print(s4.format(rmin, rmean, rmax, rstd))
 
     tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
