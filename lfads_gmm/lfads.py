@@ -749,9 +749,12 @@ def losses(params, hps, key, x_bxt, kl_scale, keep_rate):
                                          np.sum(ii_post_mean_bxtxi**2) / float(B))
 
   # Implements the idea that the average inferred input should be zero.
+  if ii_post_mean_bxtxi.shape[2] > 0:
   ii_tavg_loss = (hps['ii_tavg_reg'] *
                   (np.mean((ii_prior_mean_cxtxi - np.mean(ii_prior_mean_cxtxi, axis=1, keepdims=True))**2) +
                    np.mean((ii_post_mean_bxtxi - np.mean(ii_post_mean_bxtxi, axis=1, keepdims=True))**2)))
+  else:
+    ii_tavg_loss = 0.0
 
   # L2 - TODO: exclusion method is not general to pytrees, i.e. nested dicts
   l2reg = hps['l2reg']
