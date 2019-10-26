@@ -567,10 +567,14 @@ def batch_decompose_latent(hps, z_cxz):
   """
   ib_dim = hps['ib_dim']
   ic_dim = hps['enc_dim']
+  ii_dim = hps['ii_dim']
   ib_cxk = z_cxz[:, :ib_dim]
   ic_cxj = z_cxz[:, ib_dim:(ib_dim+ic_dim)]
   ii_cxti = z_cxz[:, (ib_dim+ic_dim):]
-  ii_cxtxi = np.reshape(ii_cxti, (ii_cxti.shape[0], -1, hps['ii_dim']))
+  if ii_cxti.shape[1] > 0:
+    ii_cxtxi = np.reshape(ii_cxti, (ii_cxti.shape[0], -1, ii_dim))
+  else:
+    ii_cxtxi = np.zeros((hps['gmm_size'], hps['ntimesteps'], 0))
   return ib_cxk, ic_cxj, ii_cxtxi
 
 
