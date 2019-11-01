@@ -108,12 +108,15 @@ optimize_core_jit = jit(optimize_core, static_argnums=(2,3,4,6,7,8))
 
 
 def optimize_lfads(key, init_params, hps, opt_hps,
-                   train_data_fun, eval_data_fun):
+                   train_data_fun, eval_data_fun,
+                   ncompleted_batches=0, opt_state=None,
+                   callback_fun=None, do_print=True):
   """Optimize the LFADS model and print batch based optimization data.
 
   This loop is at the cpu nonjax-numpy level.
 
   Arguments:
+    key: random.PRNGKey for randomness
     init_params: a dict of parameters to be trained
     hps: dict of lfads model HPs
     opt_hps: dict of optimization HPs
@@ -121,8 +124,26 @@ def optimize_lfads(key, init_params, hps, opt_hps,
       nexamples x time x ndims np array of data for training
     eval_data_fun: function that takes a key and returns
       nexamples x time x ndims np array of data for held out error
+    ncompleted_batches: (default 0), use this to restart training in the middle
+      of the batch count. Used in tandem with opt_state (below).
+    opt_state: (default None) 3-tuple (params, m - 1st moment, v - 2nd moment) 
+      from jax.experimental.optimizers.adam (None value starts optimizer anew).
+      The params in opt_state[0] will *override* the init_params argument.
+    callback_fun: (default None) function that the optimzie routine will call 
+      every print_every loops, in order to do whatever the user wants, typically
+      saving, or reporting to a hyperparameter tuner, etc.
+      callback_fun parameters are
+        (current_batch_idx:int, hps:dict, opt_hps:dict, 
+         params:dict, opt_state:tuple,
+         tlosses:dict, elosses:dict) 
+    do_print: (default True), print loss information
   Returns:
-    a dictionary of trained parameters"""
+    A 3-tuple of 
+      (trained_params, 
+       opt_details - dictionary of optimization losses through training, 
+       (opt_state - a 3-tuple of trained params in odd pytree form, 
+         m 1st moment, v 2nd moment)).
+  """
 
   # Begin optimziation loop.
   all_tlosses = []
@@ -138,7 +159,17 @@ def optimize_lfads(key, init_params, hps, opt_hps,
                                                      b1=opt_hps['adam_b1'],
                                                      b2=opt_hps['adam_b2'],
                                                      eps=opt_hps['adam_eps'])
-  opt_state = opt_init(init_params)
+  print_every = opt_hps['print_every']  
+  if ncompleted_batches > 0:
+    print('Starting batch count at %d.' % (ncompleted_batches))
+    assert ncompleted_batches % print_every == 0
+    opt_loop_start_idx = int(ncompleted_batches / print_every)
+  else:
+    opt_loop_start_idx = 0
+  if opt_state is not None:
+    print('Received opt_state, ignoring init_params argument.')
+  else:
+    opt_state = opt_init(init_params)
 
   def update_w_gc(i, opt_state, hps, opt_hps, key, x_bxt,
                   kl_warmup):
@@ -155,10 +186,10 @@ def optimize_lfads(key, init_params, hps, opt_hps,
   # print status.
   batch_size = hps['batch_size']
   num_batches = opt_hps['num_batches']
-  print_every = opt_hps['print_every']
+  assert num_batches % print_every == 0
   num_opt_loops = int(num_batches / print_every)
   params = get_params(opt_state)
-  for oidx in range(num_opt_loops):
+  for oidx in range(opt_loop_start_idx, num_opt_loops):
     batch_idx_start = oidx * print_every
     start_time = time.time()
     key, tkey, dtkey1, dtkey2, dekey1, dekey2 = \
@@ -174,14 +205,10 @@ def optimize_lfads(key, init_params, hps, opt_hps,
     batch_pidx = batch_idx_start + print_every
     kl_warmup = kl_warmup_fun(batch_idx_start)
     # Training loss
-    #didxs = onp.random.randint(0, train_data.shape[0], batch_size)
-    #x_bxt = train_data[didxs].astype(onp.float32)
     x_bxt = train_data_fun(dtkey1)
     tlosses = lfads.losses_jit(params, hps, dtkey2, x_bxt, kl_warmup, 1.0)
 
     # Evaluation loss
-    #didxs = onp.random.randint(0, eval_data.shape[0], batch_size)
-    #ex_bxt = eval_data[didxs].astype(onp.float32)
     ex_bxt = eval_data_fun(dekey1)
     elosses = lfads.losses_jit(params, hps, dekey2, ex_bxt, kl_warmup, 1.0)
     # Saving, printing.
@@ -193,23 +220,30 @@ def optimize_lfads(key, init_params, hps, opt_hps,
 
     all_tlosses.append(tlosses)
     all_elosses.append(elosses)
-    s1 = "Batches {}-{} in {:0.2f} sec, Step size: {:0.5f}"
-    s2 = "    Training losses {:0.0f} = NLL {:0.0f} + KL {:0.1f},{:0.1f} + L2 {:0.2f} + II L2 {:0.2f} + <II> {:0.2f} "
-    s3 = "        Eval losses {:0.0f} = NLL {:0.0f} + KL {:0.1f},{:0.1f} + L2 {:0.2f} + II L2 {:0.2f} + <II> {:0.2f} "
-    s4 = "        Resps: min {:0.4f}, mean {:0.4f}, max {:0.4f}, std {:0.4f}"
-    print(s1.format(batch_idx_start+1, batch_pidx, batch_time,
-                   decay_fun(batch_pidx)))
-    print(s2.format(tlosses['total'], tlosses['nlog_p_xgz'],
-                    tlosses['kl_prescale'], tlosses['kl'],
-                    tlosses['l2'], tlosses['ii_l2'], tlosses['ii_tavg']))
-    print(s3.format(elosses['total'], elosses['nlog_p_xgz'],
-                    elosses['kl_prescale'], elosses['kl'],
-                    elosses['l2'], elosses['ii_l2'], elosses['ii_tavg']))
-    print(s4.format(rmin, rmean, rmax, rstd))
+    if do_print:
+      s1 = "Batches {}-{} in {:0.2f} sec, Step size: {:0.5f}"
+      s2 = "    Training losses {:0.0f} = NLL {:0.0f} + KL {:0.1f},{:0.1f} + L2 {:0.2f} + II L2 {:0.2f} + <II> {:0.2f} "
+      s3 = "        Eval losses {:0.0f} = NLL {:0.0f} + KL {:0.1f},{:0.1f} + L2 {:0.2f} + II L2 {:0.2f} + <II> {:0.2f} "
+      s4 = "        Resps: min {:0.4f}, mean {:0.4f}, max {:0.4f}, std {:0.4f}"
+      print(s1.format(batch_idx_start+1, batch_pidx, batch_time,
+                     decay_fun(batch_pidx)))
+      print(s2.format(tlosses['total'], tlosses['nlog_p_xgz'],
+                      tlosses['kl_prescale'], tlosses['kl'],
+                      tlosses['l2'], tlosses['ii_l2'], tlosses['ii_tavg']))
+      print(s3.format(elosses['total'], elosses['nlog_p_xgz'],
+                      elosses['kl_prescale'], elosses['kl'],
+                      elosses['l2'], elosses['ii_l2'], elosses['ii_tavg']))
+      print(s4.format(rmin, rmean, rmax, rstd))
+    
+    if callback_fun is not None:
+      callback_fun(batch_pidx, hps, opt_hps, params, opt_state,
+                   tlosses, elosses)
 
-    tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
-    elosses_thru_training = utils.merge_losses_dicts(all_elosses)
-    optimizer_details = {'tlosses' : tlosses_thru_training,
-                         'elosses' : elosses_thru_training}
+    
+  tlosses_thru_training = utils.merge_losses_dicts(all_tlosses)
+  elosses_thru_training = utils.merge_losses_dicts(all_elosses)
+  optimizer_details = {'tlosses' : tlosses_thru_training,
+                       'elosses' : elosses_thru_training}
 
-  return params, optimizer_details
+    
+  return params, optimizer_details, opt_state
