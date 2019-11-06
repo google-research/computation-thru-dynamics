@@ -287,7 +287,7 @@ def init_params(key, hps):
   Returns:
     a dictionary of LFADS parameters
   """
-  keys = random.split(key, 9)
+  keys = random.split(key, 10)
 
   data_dim = hps['data_dim']
   ntimesteps = hps['ntimesteps']
