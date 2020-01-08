@@ -221,7 +221,7 @@ def gru(params, h, x):
   r = sigmoid(r)
   u = sigmoid(u)
   rhx = np.concatenate([r * h, x])
-  c = np.tanh(np.dot(params['wCHX'], rhx) + params['bC'] + bfg)
+  c = np.tanh(np.dot(params['wCHX'], rhx) + params['bC'])
   return u * h + (1.0 - u) * c
 
 
