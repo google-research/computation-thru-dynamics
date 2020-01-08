@@ -95,10 +95,13 @@ def gru(params, h, x, bfg=0.5):
     np array of hidden state after GRU update"""
 
   hx = np.concatenate([h, x], axis=0)
-  ru = sigmoid(np.dot(params['wRUHX'], hx) + params['bRU'])
+  ru = np.dot(params['wRUHX'], hx) + params['bRU']
   r, u = np.split(ru, 2, axis=0)
+  r = sigmoid(r)
+  u = u + bfg
+  u = sigmoid(u)
   rhx = np.concatenate([r * h, x])
-  c = np.tanh(np.dot(params['wCHX'], rhx) + params['bC'] + bfg)
+  c = np.tanh(np.dot(params['wCHX'], rhx) + params['bC'])
   return u * h + (1.0 - u) * c
 
 
