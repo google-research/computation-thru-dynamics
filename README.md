@@ -9,7 +9,7 @@ This is not an officially supported Google product.
 
 ## Prerequisites
 
-The code is written in Python 2.7.13. You will also need:
+The code is written in Python 2.7.13 but should be compatible with Python 3. You will also need:
 
 * **JAX** version 0.1.27 or greater ([install](https://github.com/google/jax#installation)) -
 * **JAX lib** version 0.1.14 or greater (installed with JAX)
