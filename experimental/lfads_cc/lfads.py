@@ -35,28 +35,6 @@ def sigmoid(x):
   return 0.5 * (np.tanh(x / 2.) + 1)
 
 
-def gmm_params(key, num, dim, mean_std=0.3, var_mean=0.2, var_std=0.025):
-  """Params for Gaussian mixture model.
-
-  Args:
-    key: random.PRNGKey for random bits
-    num: number of gaussians in mixture
-    dim: dimension of gaussian
-    mean_std: standard deviation of random means around 0
-    var_mean : mean of variance of each gaussian
-    var_std: standard deviation of the mean of each gaussian
-
-  Returns:
-    a dictionary of mixture model parameters
-  """
-  keys = random.split(key, 2)
-  resp_logits = np.ones((num,))       # always put into softmax
-  mean_params = mean_std * random.normal(keys[0], shape=(num, dim))
-  logvar_params = np.log(var_mean * np.ones((num, dim))
-                         + var_std * random.normal(keys[1], shape=(num, dim)))
-  return {'resps': resp_logits, 'means': mean_params, 'logvars': logvar_params}
-
-
 def class_cond_gauss_params(key, num, dim, mean_std=0.3,
                             var_mean=0.2, var_std=0.025):
   """Params for Gaussians that are class conditioned.
