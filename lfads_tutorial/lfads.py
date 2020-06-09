@@ -253,7 +253,7 @@ def run_bidirectional_rnn(params, fwd_rnn, bwd_rnn, x_t):
   bwd_enc_t = np.flipud(run_rnn(bwd_rnn_scan, np.flipud(x_t),
                                 params['bwd_rnn']['h0']))
   full_enc = np.concatenate([fwd_enc_t, bwd_enc_t], axis=1)
-  enc_ends = np.concatenate([bwd_enc_t[0], fwd_enc_t[-1]], axis=1)
+  enc_ends = np.concatenate([bwd_enc_t[0], fwd_enc_t[-1]], axis=0)
   return full_enc, enc_ends
 
 
