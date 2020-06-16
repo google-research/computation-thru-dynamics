@@ -310,7 +310,8 @@ def init_params(key, hps):
   ii_dim = hps['ii_dim']
   gen_dim = hps['gen_dim']
   factors_dim = hps['factors_dim']
-  ic_dim = factors_dim
+#  ic_dim = factors_dim
+  ic_dim = gen_dim
   ib_dim = hps['ib_dim']  # inferred bias is a static input to generator
   z_dim = ib_dim + ic_dim + ntimesteps * ii_dim
 
@@ -326,7 +327,8 @@ def init_params(key, hps):
 
   con_params = gru_params(keys[6], con_dim, 2*enc_dim + factors_dim + ii_dim)
   con_out_params = affine_params(keys[7], 2*ii_dim, con_dim)  # m, v
-  gen_params = gru_params(keys[8], gen_dim, ii_dim + nclasses)
+#  gen_params = gru_params(keys[8], gen_dim, ii_dim + nclasses)
+  gen_params = gru_params(keys[8], gen_dim, ii_dim + ib_dim + nclasses)
   factors_params = linear_params(keys[9], factors_dim, gen_dim)
   lograte_params = affine_params(keys[10], data_dim, factors_dim)
 
@@ -597,7 +599,8 @@ def decompose_latent(hps, z):
     (3-tuple of np.arrays, (inferred bias, initial condition, inferred inputs).
   """
   ib_dim = hps['ib_dim']
-  ic_dim = hps['factors_dim']
+  ic_dim = hps['gen_dim']
+  #ic_dim = hps['factors_dim']
   ib_k = z[:ib_dim]
   ic_j = z[ib_dim:(ib_dim+ic_dim)]
   ii_ti = z[(ib_dim+ic_dim):]
@@ -617,7 +620,8 @@ def batch_decompose_latent(hps, z_cxz):
     (3-tuple of np.arrays, (inferred bias, initial condition, inferred inputs).
   """
   ib_dim = hps['ib_dim']
-  ic_dim = hps['factors_dim']
+  ic_dim = hps['enc_dim']
+  #ic_dim = hps['factors_dim']
   ii_dim = hps['ii_dim']
   ib_cxk = z_cxz[:, :ib_dim]
   ic_cxj = z_cxz[:, ib_dim:(ib_dim+ic_dim)]
