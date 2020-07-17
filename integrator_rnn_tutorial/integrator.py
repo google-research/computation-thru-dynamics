@@ -30,7 +30,7 @@ def build_input_and_target_pure_integration(input_params, key):
 
   # Create the white noise input.
   key, skeys = utils.keygen(key, 2)
-  random_sample = random.normal(next(skeys), (1,))[0]
+  random_sample = random.uniform(next(skeys), (1,))[0]
   bias = bias_val * 2.0 * (random_sample - 0.5)
   stddev = stddev_val / np.sqrt(dt)
   random_samples = random.normal(next(skeys), (ntime,))
