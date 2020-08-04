@@ -9,14 +9,21 @@ This is not an officially supported Google product.
 
 ## Prerequisites
 
-The code is written in Python 2.7.13 but should be compatible with Python 3. You will also need:
+The code is written to be compatible with Python 3. You will also need:
 
-* **JAX** version 0.1.27 or greater ([install](https://github.com/google/jax#installation)) -
-* **JAX lib** version 0.1.14 or greater (installed with JAX)
+* **JAX** version 0.1.75 or greater ([install](https://github.com/google/jax#installation)) -
+* **JAX lib** latest version (installed with JAX)
 * **NumPy, SciPy, Matplotlib** ([install SciPy stack](https://www.scipy.org/install.html), contains all of them)
 * **h5py** ([install](https://pypi.python.org/pypi/h5py))
 * **A GPU** -  XLA compiles these examples to CPU *very slowly*, so best to use a GPU for now.
 
+
+## Analysis of toy model associated with *How recurrent networks implement contextual processing in sentiment analysis*
+
+Neural networks have a remarkable capacity for contextual processing—using recent or nearby inputs to modify processing of current input. For example, in natural language, contextual processing is necessary to correctly interpret negation (e.g. phrases such as “not bad”). However, our ability to understand how networks process context is limited. Here, we propose general methods for reverse engineering recurrent neural networks (RNNs) to identify and elucidate contextual
+processing.
+
+This [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/coming.ipynb) runs through the analysis of the toy model found in [How recurrent networks implement contextual processing in sentiment analysis](https://arxiv.org/abs/2004.08013).
 
 ## LFADS - Latent Factor Analysis via Dynamical Systems
 
