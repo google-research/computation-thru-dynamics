@@ -23,7 +23,7 @@ The code is written to be compatible with Python 3. You will also need:
 Neural networks have a remarkable capacity for contextual processing—using recent or nearby inputs to modify processing of current input. For example, in natural language, contextual processing is necessary to correctly interpret negation (e.g. phrases such as “not bad”). However, our ability to understand how networks process context is limited. Here, we propose general methods for reverse engineering recurrent neural networks (RNNs) to identify and elucidate contextual
 processing.
 
-This [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/coming.ipynb) runs through the analysis of the toy model found in [How recurrent networks implement contextual processing in sentiment analysis](https://arxiv.org/abs/2004.08013).
+This [Jupyter notebook](https://github.com/google-research/computation-thru-dynamics/blob/master/notebooks/toy_model_for_context_ICML_2020.ipynb) runs through the analysis of the toy model found in [How recurrent networks implement contextual processing in sentiment analysis](https://arxiv.org/abs/2004.08013).
 
 ## LFADS - Latent Factor Analysis via Dynamical Systems
 
