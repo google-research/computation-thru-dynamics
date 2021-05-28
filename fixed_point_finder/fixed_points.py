@@ -149,7 +149,10 @@ def optimize_fp_core(batch_idx_start, num_batches, update_fun, opt_state):
   return lax.fori_loop(lower, upper, run_update, opt_state)
 
 
-optimize_fp_core_jit = jit(optimize_fp_core, static_argnums=(1, 2, 3))
+def get_optimize_fp_core(batch_idx_start, num_batches, update_fun, opt_state):
+    def get_optimize_fp_core_(batch_idx_start, num_batches):
+        return optimize_fp_core(batch_idx_start, num_batches, update_fun, opt_state)
+    return get_optimize_fp_core_
 
 
 def optimize_fps(rnn_fun, fp_candidates, hps, do_print=True):
@@ -214,8 +217,11 @@ def optimize_fps(rnn_fun, fp_candidates, hps, do_print=True):
       break
     batch_idx_start = oidx * print_every
     start_time = time.time()
-    opt_state = optimize_fp_core_jit(batch_idx_start, print_every, update_fun,
-                                     opt_state)
+
+    optimize_fp_core = get_optimize_fp_core(batch_idx_start, num_batches, update_fun, opt_state)
+    optimize_fp_core_jit = jit(optimize_fp_core, static_argnums=(1, ))
+    
+    opt_state = optimize_fp_core_jit(batch_idx_start, print_every)
     batch_time = time.time() - start_time
 
     # Training loss
